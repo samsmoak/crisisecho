@@ -1,0 +1,36 @@
+# Secrets — never commit
+.env
+
+# Go build artifacts
+crisisecho
+*.exe
+*.test
+vendor/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Telegram session files (created by Telethon)
+*.session
+*.session-journal
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# macOS
+.DS_Store
+
+# Aiven Kafka TLS certificates — never commit private keys
+certs/*.pem
+certs/*.cert
+certs/*.key

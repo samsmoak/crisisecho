@@ -1,0 +1,45 @@
+version: "3.9"
+
+# ── CrisisEcho — full local stack ─────────────────────────────────────────────
+# Usage:
+#   fill in .env (all API keys are already listed there)
+#   place Aiven TLS certs in certs/ (ca.pem, service.cert, service.key)
+#   docker compose up --build
+
+services:
+
+  # ── Application ─────────────────────────────────────────────────────────────
+  crisisecho-api:
+    build: .
+    ports:
+      - "8080:8080"   # Go API
+      - "8081:8081"   # Python sidecar (internal; exposed for debugging)
+    # Load every variable from .env, then override only the infrastructure URLs
+    # that must point to container service names instead of localhost.
+    env_file:
+      - .env
+    environment:
+      # ── Infrastructure URLs (override .env localhost defaults) ─────────────
+      # MongoDB Atlas URIs are NOT overridden here — they come from .env as-is.
+      # Kafka (Aiven) broker is NOT overridden here — comes from .env as-is.
+      REDIS_URL:          redis://redis:6379
+      # Go API base used by Python preprocessor (inside the same container)
+      GO_API_BASE:        http://localhost:8080
+      # Python sidecar runs in the same container on 8081
+      PYTHON_SIDECAR_URL: http://localhost:8081
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Redis ────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
