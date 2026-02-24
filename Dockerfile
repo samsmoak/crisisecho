@@ -4,7 +4,8 @@ FROM golang:1.23-alpine AS builder
 WORKDIR /build
 
 # Cache module downloads separately from source
-COPY go.mod go.sum ./
+# COPY go.mod go.sum ./
+COPY go.mod go.sum* ./
 RUN go mod download
 
 # Copy source and build a fully-static binary
