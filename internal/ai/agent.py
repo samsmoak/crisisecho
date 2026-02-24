@@ -56,17 +56,18 @@ def _build_llm():
 
 @dataclass
 class AlertPayload:
-    cluster_id:          str
-    crisis_id:           str
-    alert_id:            str
-    event_type:          str
+    cluster_id:           str
+    unified_post_id:      str
+    crisis_id:            str
+    alert_id:             str
+    event_type:           str
     location_description: str
-    severity:            int
-    alert_text:          str
-    verification:        VerificationResult
-    sources:             list[str] = field(default_factory=list)
-    lat:                 float = 0.0
-    lng:                 float = 0.0
+    severity:             int
+    alert_text:           str
+    verification:         VerificationResult
+    sources:              list[str] = field(default_factory=list)
+    lat:                  float = 0.0
+    lng:                  float = 0.0
 
 
 # ── Prompt templates ─────────────────────────────────────────────────────────
@@ -206,11 +207,17 @@ class CrisisAgent:
                 severity_score, event_type, location_desc, platform_list
             )
 
-            # Compute centroid from cluster posts
-            resolved = [p for p in cluster_posts
-                        if p.get("location_source") != "unresolved"]
-            clat = sum(p.get("location", {}).get("coordinates", [0, 0])[1] for p in resolved) / max(len(resolved), 1)
-            clng = sum(p.get("location", {}).get("coordinates", [0, 0])[0] for p in resolved) / max(len(resolved), 1)
+            # Compute centroid — use only GPS-sourced posts with full confidence
+            gps_posts = [p for p in cluster_posts
+                         if p.get("location_source") == "gps"
+                         and p.get("location_confidence", 0.0) == 1.0]
+            # Fall back to trigger coordinates if no GPS posts available
+            if gps_posts:
+                clat = sum(p.get("location", {}).get("coordinates", [0, 0])[1] for p in gps_posts) / len(gps_posts)
+                clng = sum(p.get("location", {}).get("coordinates", [0, 0])[0] for p in gps_posts) / len(gps_posts)
+            else:
+                clat = lat
+                clng = lng
 
             # Persist to MongoDB
             cluster_id = self._write_cluster(
@@ -218,9 +225,29 @@ class CrisisAgent:
                 cluster_spec.get("estimated_time"), sources, official_signal,
                 clat, clng, verification,
             )
+            # Write the unified post — the system's synthesised view of this cluster
+            unified_post_id = self._write_unified_post(
+                cluster_id=cluster_id,
+                cluster_posts=cluster_posts,
+                event_type=event_type,
+                location_desc=location_desc,
+                severity=severity_score,
+                severity_rationale=severity_rationale,
+                sources=sources,
+                official_signal=official_signal,
+                clat=clat,
+                clng=clng,
+                verification=verification,
+            )
+            # Create crisis only if the unified post is verified
             crisis_id = self._write_crisis(
-                event_type, clat, clng, severity_score, sources,
-                f"{event_type} near {location_desc}. {severity_rationale}",
+                unified_post_id=unified_post_id,
+                event_type=event_type,
+                clat=clat,
+                clng=clng,
+                severity=severity_score,
+                sources=sources,
+                description=f"{event_type} near {location_desc}. {severity_rationale}",
             )
             alert_id = self._write_alert(
                 cluster_id, alert_text, severity_score, event_type,
@@ -232,6 +259,7 @@ class CrisisAgent:
 
             results.append(AlertPayload(
                 cluster_id=cluster_id,
+                unified_post_id=unified_post_id,
                 crisis_id=crisis_id,
                 alert_id=alert_id,
                 event_type=event_type,
@@ -413,28 +441,68 @@ class CrisisAgent:
         result = self.main_db.clusters.insert_one(doc)
         return str(result.inserted_id)
 
+    def _write_unified_post(
+        self,
+        cluster_id: str,
+        cluster_posts: list[dict],
+        event_type: str,
+        location_desc: str,
+        severity: int,
+        severity_rationale: str,
+        sources: list[str],
+        official_signal: bool,
+        clat: float,
+        clng: float,
+        verification: VerificationResult,
+    ) -> str:
+        now = datetime.now(timezone.utc)
+        post_ids = [p.get("post_id", str(p.get("_id", ""))) for p in cluster_posts]
+        contributor_count = len({p.get("user", "") for p in cluster_posts if p.get("user")})
+        summary = f"{event_type} near {location_desc}. {severity_rationale}"
+        doc = {
+            "cluster_id":             ObjectId(cluster_id),
+            "event_type":             event_type,
+            "summary":                summary,
+            "location":               {"type": "Point", "coordinates": [clng, clat]},
+            "lat":                    clat,
+            "lng":                    clng,
+            "severity":               severity,
+            "confidence_score":       verification.confidence_score,
+            "sources":                sources,
+            "contributor_count":      contributor_count,
+            "official_corroboration": official_signal,
+            "post_ids":               post_ids,
+            "verified":               verification.verified,
+            "created_at":             now,
+            "updated_at":             now,
+        }
+        result = self.main_db.unified_posts.insert_one(doc)
+        return str(result.inserted_id)
+
     def _write_crisis(
         self,
+        unified_post_id: str,
         event_type: str,
-        lat: float,
-        lng: float,
+        clat: float,
+        clng: float,
         severity: int,
         sources: list[str],
         description: str,
     ) -> str:
         now = datetime.now(timezone.utc)
         doc = {
-            "event":        event_type,
-            "location":     {"type": "Point", "coordinates": [lng, lat]},
-            "lat":          lat,
-            "lng":          lng,
-            "severity":     severity,
-            "confirmed":    True,
-            "sources":      sources,
-            "description":  description,
-            "image_urls":   [],
-            "start_time":   now,
-            "last_updated": now,
+            "unified_post_id": ObjectId(unified_post_id),
+            "event":           event_type,
+            "location":        {"type": "Point", "coordinates": [clng, clat]},
+            "lat":             clat,
+            "lng":             clng,
+            "severity":        severity,
+            "confirmed":       True,
+            "sources":         sources,
+            "description":     description,
+            "image_urls":      [],
+            "start_time":      now,
+            "last_updated":    now,
         }
         result = self.main_db.crises.insert_one(doc)
         return str(result.inserted_id)

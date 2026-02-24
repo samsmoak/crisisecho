@@ -67,10 +67,7 @@ RUN pip install --no-cache-dir \
       praw \
       atproto \
       websocket-client \
-      "Mastodon.py" \
-      telethon \
       feedparser \
-      beautifulsoup4 \
       requests \
       # Redis
       redis

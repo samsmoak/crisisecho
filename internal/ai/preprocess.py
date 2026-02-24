@@ -9,7 +9,7 @@ Consumes the social_raw Kafka topic and runs each message through:
   5. Voyage AI text embedding (1024-dim) → upsert to vector DB
   6. CLIP image embedding stub (512-dim) → upsert to vector DB
   7. S3 image upload stub → save final image_urls
-  8. POST to Go /posts  → save UnifiedPost to main MongoDB
+  8. POST to Go /source-posts  → save SourcePost to main MongoDB
 """
 
 import hashlib
@@ -135,7 +135,7 @@ class Preprocessor:
         final_image_urls = self._upload_images(payload.get("image_urls", []))
 
         # Step 8: POST to Go API
-        self._save_unified_post(
+        self._save_source_post(
             envelope          = envelope,
             cleaned_text      = cleaned_text,
             location          = location_data,
@@ -286,7 +286,7 @@ class Preprocessor:
 
     # ── Step 8: Save UnifiedPost ──────────────────────────────────────────────
 
-    def _save_unified_post(
+    def _save_source_post(
         self,
         envelope: dict,
         cleaned_text: str,
@@ -297,7 +297,7 @@ class Preprocessor:
     ) -> None:
         payload = envelope.get("payload", {})
 
-        unified_post = {
+        source_post = {
             "source":               envelope.get("source", ""),
             "post_id":              payload.get("post_id", ""),
             "text":                 payload.get("text", ""),
@@ -321,13 +321,13 @@ class Preprocessor:
 
         try:
             resp = requests.post(
-                f"{GO_API_BASE}/api/posts",
-                json=unified_post,
+                f"{GO_API_BASE}/api/source-posts",
+                json=source_post,
                 timeout=10,
             )
             resp.raise_for_status()
         except Exception as exc:
-            logger.error("save_unified_post error: %s", exc)
+            logger.error("save_source_post error: %s", exc)
 
 
 if __name__ == "__main__":

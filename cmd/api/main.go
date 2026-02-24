@@ -77,9 +77,9 @@ func main() {
 			groupID = "crisisecho-ingest"
 		}
 
-		mainDB     := mainClient.Database(os.Getenv("MONGO_DB_DATABASE"))
-		unifiedRepo := postRepo.NewUnifiedPostRepository(mainDB)
-		postService  := postSvc.NewPostService(mainDB, unifiedRepo)
+		mainDB      := mainClient.Database(os.Getenv("MONGO_DB_DATABASE"))
+		sourceRepo  := postRepo.NewSourcePostRepository(mainDB)
+		postService := postSvc.NewPostService(mainDB, sourceRepo)
 		ingestService := ingestSvc.NewIngestService(brokers, groupID, postService)
 
 		go func() {

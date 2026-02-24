@@ -9,24 +9,27 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 
-	alertCtrl   "crisisecho/internal/apps/alert/controller"
-	alertRepo   "crisisecho/internal/apps/alert/repository"
-	alertSvc    "crisisecho/internal/apps/alert/service"
-	clusterCtrl "crisisecho/internal/apps/cluster/controller"
-	clusterRepo "crisisecho/internal/apps/cluster/repository"
-	clusterSvc  "crisisecho/internal/apps/cluster/service"
-	crisisCtrl  "crisisecho/internal/apps/crisis/controller"
-	crisisRepo  "crisisecho/internal/apps/crisis/repository"
-	crisisSvc   "crisisecho/internal/apps/crisis/service"
-	notifyCtrl  "crisisecho/internal/apps/notify/controller"
-	notifyRepo  "crisisecho/internal/apps/notify/repository"
-	notifySvc   "crisisecho/internal/apps/notify/service"
-	postCtrl    "crisisecho/internal/apps/post/controller"
-	postRepo    "crisisecho/internal/apps/post/repository"
-	postSvc     "crisisecho/internal/apps/post/service"
-	queryCtrl   "crisisecho/internal/apps/query/controller"
-	querySvc    "crisisecho/internal/apps/query/service"
-	ragSvc      "crisisecho/internal/apps/rag/service"
+	alertCtrl       "crisisecho/internal/apps/alert/controller"
+	alertRepo       "crisisecho/internal/apps/alert/repository"
+	alertSvc        "crisisecho/internal/apps/alert/service"
+	clusterCtrl     "crisisecho/internal/apps/cluster/controller"
+	clusterRepo     "crisisecho/internal/apps/cluster/repository"
+	clusterSvc      "crisisecho/internal/apps/cluster/service"
+	crisisCtrl      "crisisecho/internal/apps/crisis/controller"
+	crisisRepo      "crisisecho/internal/apps/crisis/repository"
+	crisisSvc       "crisisecho/internal/apps/crisis/service"
+	notifyCtrl      "crisisecho/internal/apps/notify/controller"
+	notifyRepo      "crisisecho/internal/apps/notify/repository"
+	notifySvc       "crisisecho/internal/apps/notify/service"
+	postCtrl        "crisisecho/internal/apps/post/controller"
+	postRepo        "crisisecho/internal/apps/post/repository"
+	postSvc         "crisisecho/internal/apps/post/service"
+	queryCtrl       "crisisecho/internal/apps/query/controller"
+	querySvc        "crisisecho/internal/apps/query/service"
+	ragSvc          "crisisecho/internal/apps/rag/service"
+	unifiedPostCtrl "crisisecho/internal/apps/unifiedpost/controller"
+	unifiedPostRepo "crisisecho/internal/apps/unifiedpost/repository"
+	unifiedPostSvc  "crisisecho/internal/apps/unifiedpost/service"
 	"crisisecho/internal/database"
 	locationRepo "crisisecho/internal/database/abstractrepository/location"
 	vectorRepo   "crisisecho/internal/database/abstractrepository/vectordb"
@@ -52,10 +55,16 @@ func RegisterRoutes(srv *FiberServer) {
 	api := srv.App.Group("/api")
 
 	// === Post ===
-	unifiedPostRepo := postRepo.NewUnifiedPostRepository(mainDB)
-	postService     := postSvc.NewPostService(mainDB, unifiedPostRepo)
-	postController  := postCtrl.NewPostController(postService)
-	postController.RegisterRoutes(api.Group("/posts"))
+	sourcePostRepo := postRepo.NewSourcePostRepository(mainDB)
+	postService    := postSvc.NewPostService(mainDB, sourcePostRepo)
+	postController := postCtrl.NewPostController(postService)
+	postController.RegisterRoutes(api.Group("/source-posts"))
+
+	// === Unified Post ===
+	unifiedPostRepository := unifiedPostRepo.NewUnifiedPostRepository(mainDB)
+	unifiedPostService    := unifiedPostSvc.NewUnifiedPostService(unifiedPostRepository)
+	unifiedPostController := unifiedPostCtrl.NewUnifiedPostController(unifiedPostService)
+	unifiedPostController.RegisterRoutes(api.Group("/unified-posts"))
 
 	// === Cluster ===
 	clusterRepository := clusterRepo.NewClusterRepository(mainDB)

@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strconv"
+
 	"github.com/gofiber/fiber/v2"
 
 	"crisisecho/internal/apps/crisis/model"
@@ -18,10 +20,37 @@ func NewCrisisController(svc service.CrisisService) *CrisisController {
 }
 
 // RegisterRoutes mounts the crisis routes on the provided router group.
-// /verified is registered before any wildcard to avoid route conflicts.
+// /near and /verified are registered before / to avoid route conflicts.
 func (c *CrisisController) RegisterRoutes(router fiber.Router) {
+	router.Get("/near", c.GetNear)
 	router.Get("/verified", c.GetVerifiedCrises)
 	router.Get("/", c.GetAllCrises)
+}
+
+// GET /api/crises/near?lat=&lng=&radius=
+// Returns crisis events near the given coordinates. Primary map data source.
+func (c *CrisisController) GetNear(ctx *fiber.Ctx) error {
+	lat, err := strconv.ParseFloat(ctx.Query("lat"), 64)
+	if err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid lat"})
+	}
+	lng, err := strconv.ParseFloat(ctx.Query("lng"), 64)
+	if err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid lng"})
+	}
+	radius, err := strconv.ParseFloat(ctx.Query("radius", "50"), 64)
+	if err != nil {
+		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid radius"})
+	}
+
+	crises, err := c.svc.GetNearby(ctx.UserContext(), lat, lng, radius)
+	if err != nil {
+		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if crises == nil {
+		crises = []*model.Crisis{}
+	}
+	return ctx.JSON(crises)
 }
 
 // GET /api/crises/verified

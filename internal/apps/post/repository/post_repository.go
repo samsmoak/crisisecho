@@ -77,23 +77,23 @@ func (r *RawPostRepository) FindByCrisisType(ctx context.Context, crisisType str
 	return results, nil
 }
 
-// ─── UnifiedPostRepository ────────────────────────────────────────────────────
+// ─── SourcePostRepository ────────────────────────────────────────────────────
 
-// UnifiedPostRepository provides data access for the unified "posts" collection.
-type UnifiedPostRepository struct {
-	*mongoRepo.MongoRepository[model.UnifiedPost]
+// SourcePostRepository provides data access for the unified "posts" collection.
+type SourcePostRepository struct {
+	*mongoRepo.MongoRepository[model.SourcePost]
 }
 
-// NewUnifiedPostRepository constructs a UnifiedPostRepository backed by the "posts" collection.
-func NewUnifiedPostRepository(db *mongo.Database) *UnifiedPostRepository {
-	return &UnifiedPostRepository{
-		MongoRepository: mongoRepo.NewMongoRepository[model.UnifiedPost](db, "posts"),
+// NewSourcePostRepository constructs a SourcePostRepository backed by the "posts" collection.
+func NewSourcePostRepository(db *mongo.Database) *SourcePostRepository {
+	return &SourcePostRepository{
+		MongoRepository: mongoRepo.NewMongoRepository[model.SourcePost](db, "posts"),
 	}
 }
 
-// FindNear returns UnifiedPosts within radiusKm of (lat, lng) using a $geoNear aggregation.
+// FindNear returns SourcePosts within radiusKm of (lat, lng) using a $geoNear aggregation.
 // Requires a 2dsphere index on the "location" field of "posts".
-func (r *UnifiedPostRepository) FindNear(ctx context.Context, lat, lng, radiusKm float64) ([]*model.UnifiedPost, error) {
+func (r *SourcePostRepository) FindNear(ctx context.Context, lat, lng, radiusKm float64) ([]*model.SourcePost, error) {
 	pipeline := mongo.Pipeline{
 		bson.D{{Key: "$geoNear", Value: bson.D{
 			{Key: "near", Value: bson.D{
@@ -108,18 +108,18 @@ func (r *UnifiedPostRepository) FindNear(ctx context.Context, lat, lng, radiusKm
 	}
 	cursor, err := r.Collection.Aggregate(ctx, pipeline)
 	if err != nil {
-		return nil, fmt.Errorf("UnifiedPostRepository.FindNear: %w", err)
+		return nil, fmt.Errorf("SourcePostRepository.FindNear: %w", err)
 	}
 	defer cursor.Close(ctx)
-	var results []*model.UnifiedPost
+	var results []*model.SourcePost
 	if err := cursor.All(ctx, &results); err != nil {
-		return nil, fmt.Errorf("UnifiedPostRepository.FindNear decode: %w", err)
+		return nil, fmt.Errorf("SourcePostRepository.FindNear decode: %w", err)
 	}
 	return results, nil
 }
 
-// FindRecentRelevant returns is_relevant=true UnifiedPosts within the last `minutes` minutes.
-func (r *UnifiedPostRepository) FindRecentRelevant(ctx context.Context, minutes int) ([]*model.UnifiedPost, error) {
+// FindRecentRelevant returns is_relevant=true SourcePosts within the last `minutes` minutes.
+func (r *SourcePostRepository) FindRecentRelevant(ctx context.Context, minutes int) ([]*model.SourcePost, error) {
 	since := time.Now().UTC().Add(-time.Duration(minutes) * time.Minute)
 	filter := bson.D{
 		{Key: "timestamp",   Value: bson.D{{Key: "$gte", Value: since}}},
@@ -127,35 +127,35 @@ func (r *UnifiedPostRepository) FindRecentRelevant(ctx context.Context, minutes 
 	}
 	results, err := r.FindMany(ctx, filter)
 	if err != nil {
-		return nil, fmt.Errorf("UnifiedPostRepository.FindRecentRelevant: %w", err)
+		return nil, fmt.Errorf("SourcePostRepository.FindRecentRelevant: %w", err)
 	}
 	return results, nil
 }
 
-// FindByClusterID returns all UnifiedPosts assigned to the given cluster.
-func (r *UnifiedPostRepository) FindByClusterID(ctx context.Context, clusterID primitive.ObjectID) ([]*model.UnifiedPost, error) {
+// FindByClusterID returns all SourcePosts assigned to the given cluster.
+func (r *SourcePostRepository) FindByClusterID(ctx context.Context, clusterID primitive.ObjectID) ([]*model.SourcePost, error) {
 	filter := bson.D{{Key: "cluster_id", Value: clusterID}}
 	results, err := r.FindMany(ctx, filter)
 	if err != nil {
-		return nil, fmt.Errorf("UnifiedPostRepository.FindByClusterID: %w", err)
+		return nil, fmt.Errorf("SourcePostRepository.FindByClusterID: %w", err)
 	}
 	return results, nil
 }
 
 // UpdateClusterID sets the cluster_id on the post identified by postID (hex ObjectID string).
-func (r *UnifiedPostRepository) UpdateClusterID(ctx context.Context, postID string, clusterID primitive.ObjectID) error {
+func (r *SourcePostRepository) UpdateClusterID(ctx context.Context, postID string, clusterID primitive.ObjectID) error {
 	oid, err := primitive.ObjectIDFromHex(postID)
 	if err != nil {
-		return fmt.Errorf("UnifiedPostRepository.UpdateClusterID: invalid postID %q: %w", postID, err)
+		return fmt.Errorf("SourcePostRepository.UpdateClusterID: invalid postID %q: %w", postID, err)
 	}
 	filter := bson.D{{Key: "_id", Value: oid}}
 	update := bson.D{{Key: "$set", Value: bson.D{{Key: "cluster_id", Value: clusterID}}}}
 	res, err := r.Collection.UpdateOne(ctx, filter, update)
 	if err != nil {
-		return fmt.Errorf("UnifiedPostRepository.UpdateClusterID: %w", err)
+		return fmt.Errorf("SourcePostRepository.UpdateClusterID: %w", err)
 	}
 	if res.MatchedCount == 0 {
-		return fmt.Errorf("UnifiedPostRepository.UpdateClusterID: post not found")
+		return fmt.Errorf("SourcePostRepository.UpdateClusterID: post not found")
 	}
 	return nil
 }

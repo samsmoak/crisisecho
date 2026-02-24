@@ -23,11 +23,11 @@ func NewPostController(svc service.PostService) *PostController {
 func (c *PostController) RegisterRoutes(router fiber.Router) {
 	router.Get("/nearby", c.GetNearbyPosts)
 	router.Get("/recent", c.GetRecentPosts)
-	router.Post("/", c.CreateUnifiedPost)
+	router.Post("/", c.CreateSourcePost)
 }
 
-// GET /api/posts/nearby?lat=&lng=&radius=
-// Returns unified posts within radius km of the given coordinates.
+// GET /api/source-posts/nearby?lat=&lng=&radius=
+// Returns source posts within radius km of the given coordinates.
 func (c *PostController) GetNearbyPosts(ctx *fiber.Ctx) error {
 	lat, err := strconv.ParseFloat(ctx.Query("lat"), 64)
 	if err != nil {
@@ -47,13 +47,13 @@ func (c *PostController) GetNearbyPosts(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	if posts == nil {
-		posts = []*model.UnifiedPost{}
+		posts = []*model.SourcePost{}
 	}
 	return ctx.JSON(posts)
 }
 
-// GET /api/posts/recent?minutes=
-// Returns recent relevant posts within the given number of minutes (default 30).
+// GET /api/source-posts/recent?minutes=
+// Returns recent relevant source posts within the given number of minutes (default 30).
 func (c *PostController) GetRecentPosts(ctx *fiber.Ctx) error {
 	minutes, err := strconv.Atoi(ctx.Query("minutes", "30"))
 	if err != nil {
@@ -65,19 +65,19 @@ func (c *PostController) GetRecentPosts(ctx *fiber.Ctx) error {
 		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	if posts == nil {
-		posts = []*model.UnifiedPost{}
+		posts = []*model.SourcePost{}
 	}
 	return ctx.JSON(posts)
 }
 
-// POST /api/posts
-// Internal endpoint called by the Python preprocessing pipeline to save a UnifiedPost.
-func (c *PostController) CreateUnifiedPost(ctx *fiber.Ctx) error {
-	var post model.UnifiedPost
+// POST /api/source-posts
+// Internal endpoint called by the Python preprocessing pipeline to save a SourcePost.
+func (c *PostController) CreateSourcePost(ctx *fiber.Ctx) error {
+	var post model.SourcePost
 	if err := ctx.BodyParser(&post); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid body"})
 	}
-	if err := c.svc.CreateUnifiedPost(ctx.UserContext(), &post); err != nil {
+	if err := c.svc.CreateSourcePost(ctx.UserContext(), &post); err != nil {
 		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}
 	return ctx.Status(fiber.StatusCreated).JSON(post)

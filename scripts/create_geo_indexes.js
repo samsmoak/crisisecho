@@ -30,8 +30,11 @@ function createGeoIndex(db, collectionName, fieldPath, extra) {
 print(`\n[main DB: ${MAIN_DB}]`);
 const mainDB = db.getSiblingDB(MAIN_DB);
 
-// unified posts
+// source posts
 createGeoIndex(mainDB, "posts", "location");
+
+// unified posts (system-synthesised cluster summaries)
+createGeoIndex(mainDB, "unified_posts", "location");
 
 // clusters — centroid + affected_area polygon
 createGeoIndex(mainDB, "clusters", "centroid");
@@ -54,14 +57,11 @@ const sourceCollections = [
   "twitter_posts",
   "reddit_posts",
   "bluesky_posts",
-  "mastodon_posts",
-  "nextdoor_posts",
-  "telegram_posts",
-  "nws_alerts",
   "usgs_alerts",
-  "gdelt_posts",
-  "patch_posts",
-  "pulsepoint_posts",
+  "rss_posts",
+  "gdacs_alerts",
+  "reliefweb_alerts",
+  "nasa_firms_alerts",
 ];
 for (const coll of sourceCollections) {
   createGeoIndex(mainDB, coll, "location");

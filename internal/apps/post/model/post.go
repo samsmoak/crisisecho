@@ -29,10 +29,10 @@ type RawPost struct {
 	Metadata           bson.M             `bson:"metadata"            json:"metadata"`
 }
 
-// UnifiedPost is a normalized, deduplicated post stored in the "posts" collection.
+// SourcePost is our system's normalized version of a raw platform post, stored in the "posts" collection.
 // Created by the Python preprocessing pipeline after cleaning, geocoding, and embedding.
 // ClusterID is a pointer so it serializes as null (not omitted) when unset.
-type UnifiedPost struct {
+type SourcePost struct {
 	ID                 primitive.ObjectID  `bson:"_id,omitempty"        json:"id"`
 	Source             string              `bson:"source"               json:"source"`
 	PostID             string              `bson:"post_id"              json:"post_id"`

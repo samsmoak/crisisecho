@@ -89,19 +89,21 @@ func GetOfficialAlertsCollection(client *mongo.Client) *mongo.Collection {
 	return mainDB(client).Collection("official_alerts")
 }
 
+// GetUnifiedPostsCollection returns the unified_posts collection from the main database.
+func GetUnifiedPostsCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("unified_posts")
+}
+
 // sourceCollectionNames maps source platform names to their MongoDB collection names.
 var sourceCollectionNames = map[string]string{
-	"twitter":    "twitter_posts",
-	"reddit":     "reddit_posts",
-	"bluesky":    "bluesky_posts",
-	"mastodon":   "mastodon_posts",
-	"nextdoor":   "nextdoor_posts",
-	"telegram":   "telegram_posts",
-	"nws":        "nws_alerts",
-	"usgs":       "usgs_alerts",
-	"gdelt":      "gdelt_posts",
-	"patch":      "patch_posts",
-	"pulsepoint": "pulsepoint_posts",
+	"twitter":     "twitter_posts",
+	"reddit":      "reddit_posts",
+	"bluesky":     "bluesky_posts",
+	"usgs":        "usgs_alerts",
+	"rss":         "rss_posts",
+	"gdacs":       "gdacs_alerts",
+	"reliefweb":   "reliefweb_alerts",
+	"nasa_firms":  "nasa_firms_alerts",
 }
 
 // CollectionNameForSource returns the MongoDB collection name for the given source platform.

@@ -28,18 +28,14 @@ MAX_GEO_RESULTS = 200
 
 # Source authority weights for composite ranking
 SOURCE_AUTHORITY: dict[str, float] = {
-    "official":   1.0,
-    "pulsepoint": 0.9,
-    "nextdoor":   0.8,
+    "usgs":       1.0,
+    "gdacs":      1.0,
+    "reliefweb":  1.0,
+    "nasa_firms": 1.0,
     "twitter":    0.7,
     "reddit":     0.7,
     "bluesky":    0.6,
-    "gdelt":      0.5,
-    "mastodon":   0.6,
-    "telegram":   0.6,
-    "nws":        1.0,
-    "usgs":       1.0,
-    "patch":      0.6,
+    "rss":        0.5,
 }
 
 

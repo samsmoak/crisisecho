@@ -15,6 +15,7 @@ type CrisisService interface {
 	CreateCrisis(ctx context.Context, crisis *model.Crisis) error
 	GetAllCrises(ctx context.Context) ([]*model.Crisis, error)
 	GetVerifiedCrises(ctx context.Context) ([]*model.Crisis, error)
+	GetNearby(ctx context.Context, lat, lng, radiusKm float64) ([]*model.Crisis, error)
 	VerifyCrisis(ctx context.Context, id string) error
 }
 
@@ -52,6 +53,14 @@ func (s *crisisService) GetVerifiedCrises(ctx context.Context) ([]*model.Crisis,
 	crises, err := s.repo.FindConfirmed(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("CrisisService.GetVerifiedCrises: %w", err)
+	}
+	return crises, nil
+}
+
+func (s *crisisService) GetNearby(ctx context.Context, lat, lng, radiusKm float64) ([]*model.Crisis, error) {
+	crises, err := s.repo.FindNear(ctx, lat, lng, radiusKm)
+	if err != nil {
+		return nil, fmt.Errorf("CrisisService.GetNearby: %w", err)
 	}
 	return crises, nil
 }
