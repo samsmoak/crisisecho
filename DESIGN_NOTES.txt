@@ -1,0 +1,340 @@
+CrisisEcho — Design Decisions, Tradeoffs & Architectural Notes
+===============================================================
+Last updated: 2026-02-25
+
+
+─────────────────────────────────────────────────────────────────────
+1. SYSTEM DATA FLOW (canonical mental model)
+─────────────────────────────────────────────────────────────────────
+
+Raw source data
+  ↓
+SourcePost        — normalised, vectorised version of a raw social/official post
+  ↓
+Cluster           — internal grouping of similar SourcePosts (never shown to frontend)
+  ↓
+UnifiedPost       — LLM-synthesised summary document describing what a cluster represents
+  ↓
+Crisis            — created ONLY if UnifiedPost is verified; this is the map dot
+  ↓
+Alert             — push notification sent to subscribed users
+
+Reasoning: The original codebase had no "UnifiedPost" synthesis step. Clusters went
+directly to Crisis, which meant the LLM output had nowhere clean to live and crises
+had no traceable source document. Adding UnifiedPost as an explicit intermediate step
+makes the pipeline auditable — you can always look up what the LLM said and which
+source posts fed into a crisis dot on the map.
+
+
+─────────────────────────────────────────────────────────────────────
+2. RENAME: UnifiedPost → SourcePost (Go domain)
+─────────────────────────────────────────────────────────────────────
+
+What changed:
+  The Go domain previously called "UnifiedPost" was actually storing normalised
+  individual source posts (one per raw Kafka message). The name was misleading.
+  It was renamed to SourcePost throughout Go code, and the API route changed from
+  /api/posts → /api/source-posts.
+
+Why:
+  Naming consistency with the mental model. "UnifiedPost" now exclusively means the
+  LLM synthesis document. Having two completely different things called "UnifiedPost"
+  would have caused permanent confusion during development and onboarding.
+
+Tradeoff:
+  Any existing data in the MongoDB "posts" collection is still named "posts" — only
+  the Go struct and API route changed, not the collection name. A future migration
+  would rename the collection too, but for MVP this is acceptable.
+
+
+─────────────────────────────────────────────────────────────────────
+3. TWO-SERVICE ARCHITECTURE: Go API + Python Sidecar
+─────────────────────────────────────────────────────────────────────
+
+Structure:
+  - crisisecho-api     (Go, Fiber)   — HTTP CRUD, Kafka consumer, WebSocket alerts
+  - crisisecho-sidecar (Python, FastAPI) — AI pipeline, clustering, LLM, ingestion workers
+
+Why split:
+  Go is poor at AI/ML workloads. Python has the ecosystem (LangChain, sentence-transformers,
+  PyMongo, vector ops). Keeping both in one container means one language's build complexity
+  bleeds into the other. Separate containers means each can be scaled, updated, or replaced
+  independently on Cloud Run.
+
+Communication between the two:
+  - Go → Python:  HTTP trigger (Go pings /run on sidecar every 60s to keep it warm;
+                  Python APScheduler is the authoritative scheduler)
+  - Python → Go:  HTTP POST to /api/source-posts when preprocessing a raw Kafka message
+  - Shared state: Both services connect directly to the same MongoDB Atlas databases
+  - Alerts:       Python publishes to Redis (Valkey) pub/sub channel "alerts:live";
+                  Go subscribes and pushes to connected WebSocket clients
+
+Tradeoff:
+  Two services means two Docker images, two sets of env vars, and a dependency ordering
+  problem (sidecar must be healthy before API starts, because the API's scheduler goroutine
+  needs to be able to reach the sidecar). This is handled in docker-compose with a
+  healthcheck on the sidecar and depends_on in the API service.
+
+  On Cloud Run: each service is deployed separately. The API must be given the sidecar's
+  Cloud Run URL as PYTHON_SIDECAR_URL, and the sidecar must be given the API's URL as
+  GO_API_BASE. Both must be set in the Cloud Run environment variables dashboard.
+
+Rejected alternative:
+  Single container with an entrypoint.sh that starts both processes. This works locally
+  but Cloud Run only supports one process per container, and it makes logs, scaling, and
+  crash isolation messy. The two-container approach is cleaner and more production-ready.
+
+
+─────────────────────────────────────────────────────────────────────
+4. PYTHON SIDECAR: moved to sidecar/ folder
+─────────────────────────────────────────────────────────────────────
+
+What changed:
+  All Python files were in internal/ai/. They were moved to sidecar/ at the project root.
+  A separate sidecar/Dockerfile was created.
+
+Why:
+  Having Python source inside internal/ (a Go convention for private packages) was
+  semantically wrong. The sidecar is a first-class service, not a Go internal package.
+  The separate folder makes it obvious which Dockerfile builds which service, and allows
+  the sidecar to have its own dependency management (requirements could be extracted to
+  sidecar/requirements.txt in future).
+
+Docker build context note:
+  The sidecar Dockerfile uses the project ROOT as its build context (not sidecar/ itself)
+  so that the certs/ folder is accessible during the image build. This is because MongoDB
+  Atlas TLS certificates live in certs/ at the root.
+
+
+─────────────────────────────────────────────────────────────────────
+5. REDIS → AIVEN VALKEY
+─────────────────────────────────────────────────────────────────────
+
+What changed:
+  Removed the self-hosted Redis container from docker-compose.
+  Switched to Aiven's managed Valkey service (Redis-compatible) using a rediss:// URI.
+
+Why:
+  Running Redis as a container in docker-compose is fine for local dev but creates a
+  problem for cloud deployment: Cloud Run does not support docker-compose multi-container
+  setups. Each service must be a separate Cloud Run deployment. A self-hosted Redis would
+  need its own Cloud Run service with persistent storage, which is complex and expensive.
+  Aiven Valkey is managed, handles TLS automatically, has a free tier, and the same URI
+  works identically in local Docker and on Cloud Run — zero config difference.
+
+Compatibility:
+  Valkey is a Redis-compatible fork. Both go-redis (Go) and redis-py (Python) connect to
+  it using their standard ParseURL / from_url methods with no code changes. The rediss://
+  scheme (note double-s) signals TLS, which both clients handle automatically.
+
+Tradeoff:
+  External dependency on Aiven. If Aiven is down or the service is paused (free tier
+  auto-pause), alerts will not be delivered via WebSocket. The core CRUD API remains
+  unaffected since Redis is only used for the alerts:live pub/sub channel.
+
+
+─────────────────────────────────────────────────────────────────────
+6. LLM: ANTHROPIC CLAUDE → GOOGLE GEMINI
+─────────────────────────────────────────────────────────────────────
+
+What changed:
+  The LangChain LLM in agent.py was switched from ChatAnthropic (claude-3-haiku) to
+  ChatGoogleGenerativeAI (gemini-2.0-flash). The env var changed from ANTHROPIC_API_KEY
+  to GOOGLE_API_KEY. The routes.go GOOGLE_API_KEY check was updated to match.
+
+Why:
+  Gemini 2.0 Flash has a generous free tier. Anthropic's API costs money from the first
+  token. For an MVP where the pipeline runs every 60 seconds continuously, Anthropic costs
+  would accumulate quickly during development and testing. Gemini Flash is also fast, which
+  matters for a pipeline that must complete within the scheduler interval.
+
+Tradeoff:
+  Gemini output quality may differ slightly from Claude for specific prompts. If prompt
+  tuning was done for Claude's output format, some prompts may need minor adjustment.
+  A fallback to Ollama (local Llama3) is kept in the code for offline development.
+
+Parameter change:
+  Anthropic uses max_tokens; Gemini uses max_output_tokens. This is a minor API surface
+  difference handled inside the _build_llm() function.
+
+
+─────────────────────────────────────────────────────────────────────
+7. UPLOAD SERVICE (AWS S3)
+─────────────────────────────────────────────────────────────────────
+
+What was added:
+  A standard Go domain (model / repository / service / controller) for file uploads
+  using AWS S3. Routes: GET /api/upload/presign, GET /api/upload/retrieve,
+  POST /api/upload/direct, GET /api/upload/verify.
+
+Why:
+  Raw source posts from social media often contain image URLs. The Python sidecar
+  downloads and processes these images for visual verification (image_verifier.py).
+  Rather than storing image bytes in MongoDB (bad practice — bloats the database),
+  images are stored in S3 and referenced by URL/path. The upload service provides
+  both presigned PUT URLs (client uploads directly to S3) and server-side direct
+  upload (sidecar uploads via Go API → S3).
+
+Why the Go API handles this rather than the Python sidecar directly:
+  The sidecar could upload to S3 directly using boto3. However, routing uploads through
+  the Go API keeps S3 credentials in one place, enforces file type validation at the API
+  boundary, and means the sidecar only needs to know the Go API URL — not AWS credentials.
+  This is a cleaner security boundary for production.
+
+SDK version choice:
+  Used aws-sdk-go v1 (not v2). v1 is deprecated but still maintained, and the patterns
+  are well-understood. v2 has a different API surface. Since this is an MVP and v1 works,
+  the upgrade to v2 is deferred.
+
+
+─────────────────────────────────────────────────────────────────────
+8. INGESTION SOURCES: REMOVED AND REPLACED
+─────────────────────────────────────────────────────────────────────
+
+Removed:
+  mastodon, telegram, nws, patch, pulsepoint, gdelt, nextdoor
+
+Why removed:
+  - mastodon / telegram: Require persistent API connections or bot tokens; complex auth;
+    low signal-to-noise ratio for crisis events; harder to maintain.
+  - nws: US-only National Weather Service; limited geographic scope for a global crisis
+    detection tool; GDACS supersedes it for international coverage.
+  - patch / nextdoor: Hyperlocal neighbourhood news; not publicly accessible APIs;
+    scraping-dependent and fragile.
+  - pulsepoint: Emergency dispatch API; expensive or restricted access; not viable at MVP.
+  - gdelt: Global media monitoring; extremely high volume and noisy; the quality of
+    crisis signal is low relative to the processing cost.
+
+Added:
+  Social (social_raw Kafka topic):    twitter, reddit, bluesky, rss
+  Official (official_alerts topic):   usgs, gdacs, reliefweb, nasa_firms
+
+Why these:
+  - rss: Covers any news outlet or official agency that publishes an RSS feed. Zero auth
+    required. Highly configurable via RSS_FEED_URLS env var. Good signal quality.
+  - gdacs (Global Disaster Alert and Coordination System): UN-backed, global, free,
+    machine-readable GeoRSS. Authoritative source for major disasters worldwide.
+  - reliefweb: UN OCHA humanitarian data; covers disasters, conflicts, crises globally;
+    free API; reliable and well-structured.
+  - nasa_firms (Fire Information for Resource Management System): NASA satellite wildfire
+    detection; near-realtime; free with API key; fills a gap no social source can fill
+    (fires in remote areas with no human witnesses posting online).
+
+Source authority scores (used in retrieval.py for ranking):
+  usgs / gdacs / reliefweb / nasa_firms = 1.0 (official, authoritative)
+  twitter / reddit = 0.7 (social, moderate trust)
+  bluesky = 0.6 (social, lower volume, newer)
+  rss = 0.5 (variable quality depending on feed)
+
+
+─────────────────────────────────────────────────────────────────────
+9. DATABASE ARCHITECTURE: THREE MONGODB CLUSTERS
+─────────────────────────────────────────────────────────────────────
+
+Three separate MongoDB Atlas databases are used:
+  - mainDB:      source posts, clusters, unified posts, crises, alerts, subscriptions
+  - vectorDB:    text_embeddings, image_embeddings (for similarity search)
+  - locationDB:  geo_priors, place_index, location_cache (for geolocation resolution)
+
+Why three databases:
+  Vector and location data have different access patterns and scaling needs than
+  operational data. Keeping them separate allows each to be on an appropriately sized
+  Atlas cluster tier, and prevents a large vector index from impacting CRUD performance
+  on the main operational data. It also makes it easier to swap out the vector store
+  (e.g., replace MongoDB vector search with Pinecone) without touching the main DB.
+
+Python connects directly:
+  The Python sidecar connects to all three databases via pymongo directly — it does NOT
+  go through the Go API for database access. The Go API's abstract repositories
+  (vectorRepo, locationRepo) exist for the Go side only. The Python sidecar has its own
+  direct MongoDB connection because the AI pipeline operations (vector upserts, geo
+  lookups, clustering) are too complex and high-frequency to route through HTTP.
+
+
+─────────────────────────────────────────────────────────────────────
+10. KAFKA: AIVEN MANAGED
+─────────────────────────────────────────────────────────────────────
+
+Kafka is used as the message bus between ingestion workers (Python) and the Go ingest
+consumer. Workers publish raw posts to topics; the Go consumer normalises and stores them.
+
+Topics:
+  social_raw      — posts from twitter, reddit, bluesky, rss workers
+  official_alerts — posts from usgs, gdacs, reliefweb, nasa_firms workers
+
+Why Kafka (not direct HTTP or a simple queue):
+  Ingestion workers run at different intervals (5 min for RSS, 10 min for GDACS/FIRMS,
+  15 min for ReliefWeb). Kafka decouples the workers from the consumer — if the Go API
+  is temporarily down, messages queue up and are processed when it recovers. This is
+  important for not missing crisis signals during a deployment restart.
+
+Why Aiven managed:
+  Same reasoning as Valkey — avoids running Kafka as a docker-compose container, which
+  is complex (Kafka + Zookeeper) and not portable to Cloud Run.
+
+Note on the DNS error seen during development:
+  If the Aiven Kafka service is powered off, the hostname will not resolve in DNS at all
+  (no such host). This is different from a connection refused error. The Kafka consumer
+  failure is non-fatal — the Go API continues serving all other routes. Only new raw
+  post ingestion is paused.
+
+
+─────────────────────────────────────────────────────────────────────
+11. MAP DATA SOURCE: CLUSTERS → CRISES
+─────────────────────────────────────────────────────────────────────
+
+The frontend map was originally reading from /api/clusters/hotspots.
+
+It was changed to read from /api/crises/near?lat=&lng=&radius=
+
+Why:
+  Clusters are internal implementation details. A cluster is just a group of similar
+  posts — it has no verified information, no LLM summary, and no confidence score.
+  Showing cluster centroids on a map would mean showing unverified, raw groupings
+  as if they were confirmed crisis events, which is misleading and potentially harmful.
+
+  Crisis documents only exist after the full pipeline runs AND the LLM verifier
+  confirms the event is real. Crises have a severity score, event type, location,
+  and a reference to the UnifiedPost that explains the reasoning. This is the right
+  data to show users.
+
+UnifiedPost drill-down:
+  When a user taps a crisis dot on the map, the frontend fetches
+  GET /api/unified-posts/:id using the crisis.unified_post_id field.
+  This gives the user the full LLM summary, source list, confidence score,
+  and contributor count — full transparency into why this crisis was flagged.
+
+
+─────────────────────────────────────────────────────────────────────
+12. LOCATION ACCURACY RULE
+─────────────────────────────────────────────────────────────────────
+
+When computing the UnifiedPost centroid (the map pin location):
+  ONLY SourcePosts where location_source == "gps" AND location_confidence == 1.0
+  are used to compute the average lat/lng.
+
+  If no GPS posts exist in the cluster, the coordinates fall back to the trigger
+  coordinates passed to the agent run() function (usually the cluster's approximate
+  centroid from the retrieval step).
+
+Why:
+  Social media posts often have inferred or approximate locations (city-level, IP-based,
+  or user-declared home location). These are unreliable for placing a pin on a map.
+  Only GPS-tagged posts (from mobile apps that embed device GPS coordinates) are
+  precise enough to be trusted for map placement. Using low-confidence location data
+  would result in crisis pins that are tens of kilometres from the actual event.
+
+
+─────────────────────────────────────────────────────────────────────
+13. KNOWN ENV VAR GOTCHA: $ IN .env VALUES
+─────────────────────────────────────────────────────────────────────
+
+docker-compose performs shell variable interpolation on .env file values.
+If a password or value contains a $ character (e.g., $Amsmoaky2025),
+docker-compose will try to expand $A (or whatever follows $) as a shell variable.
+Since $A is undefined, it expands to an empty string, corrupting the value.
+
+Fix: use $$ in the .env file to represent a literal $ sign.
+Example: MONGO_URI=mongodb+srv://user:$$Amsmoaky2025@host/db
+
+This affects any .env value that contains $, including passwords and tokens.
