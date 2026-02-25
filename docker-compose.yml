@@ -8,38 +8,38 @@ version: "3.9"
 
 services:
 
-  # ── Application ─────────────────────────────────────────────────────────────
-  crisisecho-api:
-    build: .
+  # ── Python AI pipeline sidecar ───────────────────────────────────────────────
+  crisisecho-sidecar:
+    build:
+      context: .                    # project root so certs/ is reachable
+      dockerfile: sidecar/Dockerfile
     ports:
-      - "8080:8080"   # Go API
-      - "8081:8081"   # Python sidecar (internal; exposed for debugging)
-    # Load every variable from .env, then override only the infrastructure URLs
-    # that must point to container service names instead of localhost.
+      - "8081:8081"
     env_file:
       - .env
     environment:
-      # ── Infrastructure URLs (override .env localhost defaults) ─────────────
-      # MongoDB Atlas URIs are NOT overridden here — they come from .env as-is.
-      # Kafka (Aiven) broker is NOT overridden here — comes from .env as-is.
-      REDIS_URL:          redis://redis:6379
-      # Go API base used by Python preprocessor (inside the same container)
-      GO_API_BASE:        http://localhost:8080
-      # Python sidecar runs in the same container on 8081
-      PYTHON_SIDECAR_URL: http://localhost:8081
-    depends_on:
-      redis:
-        condition: service_healthy
+      # When running in compose the sidecar POSTs source posts to the Go API
+      # container name instead of localhost.
+      GO_API_BASE: http://crisisecho-api:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s   # allow time for ML model loading on first start
     restart: unless-stopped
 
-  # ── Redis ────────────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
+  # ── Go API ───────────────────────────────────────────────────────────────────
+  crisisecho-api:
+    build: .
     ports:
-      - "6379:6379"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      # Point the Go API at the sidecar container name.
+      PYTHON_SIDECAR_URL: http://crisisecho-sidecar:8081
+    depends_on:
+      crisisecho-sidecar:
+        condition: service_healthy
     restart: unless-stopped
