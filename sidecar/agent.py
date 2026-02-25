@@ -1,8 +1,8 @@
 """
 agent.py — LangChain LCEL 3-step crisis detection agent.
 
-Primary LLM:  Claude claude-haiku-4-5-20251001 (Anthropic API)
-Fallback LLM: Ollama Llama3 (when ANTHROPIC_API_KEY is not set)
+Primary LLM:  Gemini 2.0 Flash (Google Generative AI API)
+Fallback LLM: Ollama Llama3 (when GOOGLE_API_KEY is not set)
 
 Chain pipeline:
   1. cluster_chain  — identify distinct events in post batch
@@ -33,19 +33,19 @@ logger = logging.getLogger(__name__)
 # ── LLM setup ────────────────────────────────────────────────────────────────
 
 def _build_llm():
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("GOOGLE_API_KEY", "")
     if api_key:
-        from langchain_anthropic import ChatAnthropic
-        return ChatAnthropic(
-            model="claude-haiku-4-5-20251001",
-            anthropic_api_key=api_key,
-            max_tokens=2048,
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model="gemini-2.0-flash",
+            google_api_key=api_key,
+            max_output_tokens=2048,
             temperature=0.2,
         )
     # Fallback: Ollama Llama3
     try:
         from langchain_community.llms import Ollama
-        logger.warning("ANTHROPIC_API_KEY not set — falling back to Ollama llama3")
+        logger.warning("GOOGLE_API_KEY not set — falling back to Ollama llama3")
         return Ollama(model="llama3")
     except Exception as exc:
         logger.error("LLM init failed: %s", exc)

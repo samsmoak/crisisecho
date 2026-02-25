@@ -9,6 +9,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // MongoRepository is a generic base repository that provides standard CRUD
@@ -94,12 +95,10 @@ func (r *MongoRepository[T]) Update(ctx context.Context, id string, doc *T) erro
 // and returns the updated document. It uses the ReturnDocument=After option so the
 // returned value reflects the update.
 func (r *MongoRepository[T]) FindOneAndUpdate(ctx context.Context, filter, update bson.D) (*T, error) {
-	opts := mongo.FindOneAndUpdateOptions{}
-	after := mongo.ReturnDocument(mongo.After)
-	opts.ReturnDocument = &after
+	opts := options.FindOneAndUpdate().SetReturnDocument(options.After)
 
 	var result T
-	err := r.Collection.FindOneAndUpdate(ctx, filter, update, &opts).Decode(&result)
+	err := r.Collection.FindOneAndUpdate(ctx, filter, update, opts).Decode(&result)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {
 			return nil, fmt.Errorf("MongoRepository.FindOneAndUpdate: document not found")

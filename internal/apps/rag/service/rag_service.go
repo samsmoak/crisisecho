@@ -28,7 +28,7 @@ type RAGService interface {
 type ragService struct {
 	sidecarURL string
 	httpClient *http.Client
-	vectorRepo vectorRepo.VectorRepository // reserved for Go-side vector lookups (Prompt 3)
+	vectorRepo *vectorRepo.VectorRepository // reserved for Go-side vector lookups (Prompt 3)
 }
 
 const maxRetries = 3
@@ -36,7 +36,7 @@ const maxRetries = 3
 // NewRAGService constructs a RAGService.
 // sidecarURL is read from $PYTHON_SIDECAR_URL (default http://localhost:8081).
 // vr is the VectorRepository injected for any Go-side vector lookups.
-func NewRAGService(vr vectorRepo.VectorRepository) RAGService {
+func NewRAGService(vr *vectorRepo.VectorRepository) RAGService {
 	url := os.Getenv("PYTHON_SIDECAR_URL")
 	if url == "" {
 		url = "http://localhost:8081"

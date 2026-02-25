@@ -17,7 +17,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir \
       # LangChain + LLM providers
       langchain \
-      langchain-anthropic \
+      langchain-google-genai \
       langchain-community \
       # Embeddings
       sentence-transformers \

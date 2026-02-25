@@ -9,30 +9,33 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 
-	alertCtrl       "crisisecho/internal/apps/alert/controller"
-	alertRepo       "crisisecho/internal/apps/alert/repository"
-	alertSvc        "crisisecho/internal/apps/alert/service"
-	clusterCtrl     "crisisecho/internal/apps/cluster/controller"
-	clusterRepo     "crisisecho/internal/apps/cluster/repository"
-	clusterSvc      "crisisecho/internal/apps/cluster/service"
-	crisisCtrl      "crisisecho/internal/apps/crisis/controller"
-	crisisRepo      "crisisecho/internal/apps/crisis/repository"
-	crisisSvc       "crisisecho/internal/apps/crisis/service"
-	notifyCtrl      "crisisecho/internal/apps/notify/controller"
-	notifyRepo      "crisisecho/internal/apps/notify/repository"
-	notifySvc       "crisisecho/internal/apps/notify/service"
-	postCtrl        "crisisecho/internal/apps/post/controller"
-	postRepo        "crisisecho/internal/apps/post/repository"
-	postSvc         "crisisecho/internal/apps/post/service"
-	queryCtrl       "crisisecho/internal/apps/query/controller"
-	querySvc        "crisisecho/internal/apps/query/service"
-	ragSvc          "crisisecho/internal/apps/rag/service"
+	alertCtrl "crisisecho/internal/apps/alert/controller"
+	alertRepo "crisisecho/internal/apps/alert/repository"
+	alertSvc "crisisecho/internal/apps/alert/service"
+	clusterCtrl "crisisecho/internal/apps/cluster/controller"
+	clusterRepo "crisisecho/internal/apps/cluster/repository"
+	clusterSvc "crisisecho/internal/apps/cluster/service"
+	crisisCtrl "crisisecho/internal/apps/crisis/controller"
+	crisisRepo "crisisecho/internal/apps/crisis/repository"
+	crisisSvc "crisisecho/internal/apps/crisis/service"
+	notifyCtrl "crisisecho/internal/apps/notify/controller"
+	notifyRepo "crisisecho/internal/apps/notify/repository"
+	notifySvc "crisisecho/internal/apps/notify/service"
+	postCtrl "crisisecho/internal/apps/post/controller"
+	postRepo "crisisecho/internal/apps/post/repository"
+	postSvc "crisisecho/internal/apps/post/service"
+	queryCtrl "crisisecho/internal/apps/query/controller"
+	querySvc "crisisecho/internal/apps/query/service"
+	ragSvc     "crisisecho/internal/apps/rag/service"
+	uploadCtrl "crisisecho/internal/apps/upload/controller"
+	uploadRepo "crisisecho/internal/apps/upload/repository"
+	uploadSvc  "crisisecho/internal/apps/upload/service"
 	unifiedPostCtrl "crisisecho/internal/apps/unifiedpost/controller"
 	unifiedPostRepo "crisisecho/internal/apps/unifiedpost/repository"
-	unifiedPostSvc  "crisisecho/internal/apps/unifiedpost/service"
+	unifiedPostSvc "crisisecho/internal/apps/unifiedpost/service"
 	"crisisecho/internal/database"
 	locationRepo "crisisecho/internal/database/abstractrepository/location"
-	vectorRepo   "crisisecho/internal/database/abstractrepository/vectordb"
+	vectorRepo "crisisecho/internal/database/abstractrepository/vectordb"
 )
 
 // RegisterRoutes wires all route groups and their dependencies into the Fiber app.
@@ -56,39 +59,45 @@ func RegisterRoutes(srv *FiberServer) {
 
 	// === Post ===
 	sourcePostRepo := postRepo.NewSourcePostRepository(mainDB)
-	postService    := postSvc.NewPostService(mainDB, sourcePostRepo)
+	postService := postSvc.NewPostService(mainDB, sourcePostRepo)
 	postController := postCtrl.NewPostController(postService)
 	postController.RegisterRoutes(api.Group("/source-posts"))
 
 	// === Unified Post ===
 	unifiedPostRepository := unifiedPostRepo.NewUnifiedPostRepository(mainDB)
-	unifiedPostService    := unifiedPostSvc.NewUnifiedPostService(unifiedPostRepository)
+	unifiedPostService := unifiedPostSvc.NewUnifiedPostService(unifiedPostRepository)
 	unifiedPostController := unifiedPostCtrl.NewUnifiedPostController(unifiedPostService)
 	unifiedPostController.RegisterRoutes(api.Group("/unified-posts"))
 
 	// === Cluster ===
 	clusterRepository := clusterRepo.NewClusterRepository(mainDB)
-	clusterService    := clusterSvc.NewClusterService(clusterRepository)
+	clusterService := clusterSvc.NewClusterService(clusterRepository)
 	clusterController := clusterCtrl.NewClusterController(clusterService)
 	clusterController.RegisterRoutes(api.Group("/clusters"))
 
 	// === Crisis ===
 	crisisRepository := crisisRepo.NewCrisisRepository(mainDB)
-	crisisService    := crisisSvc.NewCrisisService(crisisRepository)
+	crisisService := crisisSvc.NewCrisisService(crisisRepository)
 	crisisController := crisisCtrl.NewCrisisController(crisisService)
 	crisisController.RegisterRoutes(api.Group("/crises"))
 
 	// === Alert ===
 	alertRepository := alertRepo.NewAlertRepository(mainDB)
-	alertService    := alertSvc.NewAlertService(alertRepository, srv.RedisClient)
+	alertService := alertSvc.NewAlertService(alertRepository, srv.RedisClient)
 	alertController := alertCtrl.NewAlertController(alertService)
 	alertController.RegisterRoutes(api.Group("/alerts"))
 
 	// === Notify ===
 	subscriptionRepo := notifyRepo.NewSubscriptionRepository(mainDB)
-	notifyService    := notifySvc.NewNotifyService(subscriptionRepo)
+	notifyService := notifySvc.NewNotifyService(subscriptionRepo)
 	notifyController := notifyCtrl.NewNotifyController(notifyService)
 	notifyController.RegisterRoutes(api.Group("/subscribe"))
+
+	// === Upload (S3 via AWS SDK) ===
+	uploadRepository := uploadRepo.NewUploadRepository()
+	uploadService    := uploadSvc.NewUploadService(uploadRepository)
+	uploadController := uploadCtrl.NewUploadController(uploadService)
+	uploadController.RegisterRoutes(api.Group("/upload"))
 
 	// === Vector + Location (shared infrastructure) ===
 	vr := vectorRepo.NewVectorRepository(
@@ -102,8 +111,8 @@ func RegisterRoutes(srv *FiberServer) {
 	)
 
 	// === RAG + Query (conditional on ANTHROPIC_API_KEY) ===
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		ragService   := ragSvc.NewRAGService(vr)
+	if os.Getenv("GOOGLE_API_KEY") != "" {
+		ragService := ragSvc.NewRAGService(vr)
 		queryService := querySvc.NewQueryService()
 		queryController := queryCtrl.NewQueryController(queryService)
 		queryController.RegisterRoutes(api.Group("/query"))
@@ -124,7 +133,7 @@ func RegisterRoutes(srv *FiberServer) {
 
 		log.Println("routes: /api/query registered; pipeline scheduler goroutine started")
 	} else {
-		log.Println("routes: ANTHROPIC_API_KEY not set — /api/query and pipeline disabled")
+		log.Println("routes: GOOGLE_API_KEY not set — /api/query and pipeline disabled")
 	}
 
 	// ── WebSocket routes ──────────────────────────────────────────────────────
@@ -139,10 +148,10 @@ func healthHandler(srv *FiberServer) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		ctx := context.Background()
 
-		mainErr     := srv.MainClient.Ping(ctx, nil)
+		mainErr := srv.MainClient.Ping(ctx, nil)
 		locationErr := srv.LocationClient.Ping(ctx, nil)
-		vectorErr   := srv.VectorClient.Ping(ctx, nil)
-		redisErr    := srv.RedisClient.Ping(ctx).Err()
+		vectorErr := srv.VectorClient.Ping(ctx, nil)
+		redisErr := srv.RedisClient.Ping(ctx).Err()
 
 		status := fiber.Map{
 			"status":      "ok",
