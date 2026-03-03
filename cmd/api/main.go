@@ -16,6 +16,7 @@ import (
 	postRepo  "crisisecho/internal/apps/post/repository"
 	postSvc   "crisisecho/internal/apps/post/service"
 	"crisisecho/internal/database"
+	"crisisecho/internal/firebase"
 	"crisisecho/internal/server"
 )
 
@@ -30,6 +31,11 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+
+	// ── Initialize Firebase ─────────────────────────────────────────────────
+	if err := firebase.Initialize(); err != nil {
+		log.Printf("crisisecho: firebase init error (non-fatal): %v", err)
+	}
 
 	// ── Connect all three MongoDB clients ────────────────────────────────────
 	mainClient, err := database.ConnectMain(ctx)

@@ -1,0 +1,1143 @@
+================================================================================
+CRISISECHO FLUTTER MOBILE APP — 4-STAGE BUILD PROMPTS
+================================================================================
+Execute these prompts sequentially. Each stage builds on the previous.
+After stage 4 the app should be fully functional and ready for iteration.
+================================================================================
+
+
+================================================================================
+STAGE 1 — PROJECT SCAFFOLD, THEME, CORE INFRASTRUCTURE & AUTH
+================================================================================
+
+Create a Flutter mobile app for CrisisEcho — a real-time crisis monitoring platform.
+The Go backend is already built. This stage sets up the project skeleton, custom theme,
+core networking layer, data models, and the complete authentication flow.
+
+--- PROJECT STRUCTURE ---
+
+Create a Flutter project at the repo root in a folder called `mobile/`.
+Use the following directory structure:
+
+mobile/
+├── lib/
+│   ├── main.dart
+│   ├── app.dart                          # MaterialApp with theme + router
+│   ├── core/
+│   │   ├── theme/
+│   │   │   ├── app_theme.dart            # ThemeData (light + dark)
+│   │   │   ├── app_colors.dart           # Color palette constants
+│   │   │   ├── app_typography.dart        # TextTheme / TextStyles
+│   │   │   └── app_spacing.dart          # Spacing / padding constants
+│   │   ├── network/
+│   │   │   ├── api_client.dart           # Dio HTTP client singleton
+│   │   │   ├── api_endpoints.dart        # All endpoint path constants
+│   │   │   └── api_exceptions.dart       # Custom exception types
+│   │   ├── routing/
+│   │   │   └── app_router.dart           # GoRouter config with auth redirect
+│   │   ├── storage/
+│   │   │   └── secure_storage.dart       # flutter_secure_storage wrapper for JWT
+│   │   └── constants/
+│   │       └── app_constants.dart        # Base URL, timeouts, etc.
+│   ├── features/
+│   │   └── auth/
+│   │       ├── data/
+│   │       │   ├── auth_repository.dart      # AuthRepository impl
+│   │       │   └── models/
+│   │       │       ├── auth_response.dart     # { token, user }
+│   │       │       └── user_model.dart        # User model with fromJson/toJson
+│   │       ├── domain/
+│   │       │   └── auth_repository.dart      # Abstract AuthRepository interface
+│   │       └── presentation/
+│   │           ├── screens/
+│   │           │   ├── splash_screen.dart     # Logo + auto-login check
+│   │           │   ├── onboarding_screen.dart # 3-slide onboarding (first launch)
+│   │           │   └── login_screen.dart      # "Continue with Google" button
+│   │           ├── widgets/
+│   │           │   └── google_sign_in_button.dart
+│   │           └── controllers/
+│   │               └── auth_controller.dart   # Riverpod AsyncNotifier
+│   └── providers/
+│       └── providers.dart                # Top-level provider definitions
+├── assets/
+│   ├── images/                           # App logo, onboarding illustrations
+│   └── fonts/                            # Custom fonts if needed
+├── pubspec.yaml
+└── analysis_options.yaml
+
+--- DEPENDENCIES (pubspec.yaml) ---
+
+Use these packages (latest stable versions):
+  - flutter_riverpod + riverpod_annotation + riverpod_generator
+  - dio (HTTP)
+  - go_router (routing)
+  - flutter_secure_storage (JWT persistence)
+  - firebase_core + firebase_auth + google_sign_in (Google auth)
+  - google_maps_flutter (map — needed in stage 2, add now)
+  - geolocator + geocoding (device location)
+  - web_socket_channel (real-time alerts — used in stage 4)
+  - cached_network_image
+  - shimmer (loading skeletons)
+  - flutter_animate (micro-animations)
+  - intl (date formatting)
+  - freezed + freezed_annotation + json_serializable + json_annotation (codegen models)
+  - build_runner (dev dependency)
+  - flutter_svg (for SVG icons)
+  - lottie (for animations on onboarding / empty states)
+  - flutter_dotenv (environment config)
+
+--- CUSTOM THEME ---
+
+Design a futuristic, modern dark-first theme inspired by crisis/emergency monitoring dashboards.
+The aesthetic should feel like a high-tech command center — clean, data-rich, and authoritative.
+
+Color palette (app_colors.dart):
+  - Background primary: deep navy/charcoal (#0A0E1A or similar very dark blue-black)
+  - Background secondary: slightly lighter card surface (#111827)
+  - Background tertiary: elevated surface (#1E293B)
+  - Accent primary: vivid cyan/electric blue (#00D4FF) — used for active states, CTAs, map markers
+  - Accent secondary: soft teal (#2DD4BF) — used for success, verified badges
+  - Danger/critical: vivid red-orange (#FF3B5C) — used for high severity, SOS
+  - Warning: amber (#FFAA00) — used for medium severity alerts
+  - Success: emerald green (#10B981)
+  - Text primary: white with 95% opacity
+  - Text secondary: white with 60% opacity
+  - Text tertiary: white with 40% opacity
+  - Divider: white with 8% opacity
+  - Severity gradient: green (1-2) → yellow (3-4) → orange (5-6) → red (7-8) → deep red (9-10)
+
+Light theme: provide a clean light variant using the same accent colors but with white/gray backgrounds.
+
+Typography (app_typography.dart):
+  - Use "Inter" font family (import from Google Fonts or bundle)
+  - Headlines: semibold/bold, generous letter-spacing
+  - Body: regular weight, comfortable line-height (1.5)
+  - Labels/captions: medium weight, slightly condensed
+  - Monospace variant for data readouts (timestamps, coordinates): "JetBrains Mono" or "Fira Code"
+
+Spacing (app_spacing.dart):
+  - Use an 4px base grid: xs=4, sm=8, md=16, lg=24, xl=32, xxl=48
+  - Border radius: sm=8, md=12, lg=16, xl=24 (generous rounding, modern feel)
+
+ThemeData (app_theme.dart):
+  - Build complete ThemeData for both light and dark modes
+  - Style ElevatedButton: rounded (borderRadius 12), height 52, no elevation, gradient option
+  - Style Card: rounded (borderRadius 16), subtle border (1px white/8%), no default elevation
+  - Style AppBar: transparent/blurred background, no elevation
+  - Style BottomNavigationBar: transparent background, rounded indicator
+  - Style TextField/InputDecoration: filled, rounded (borderRadius 12), subtle border on focus
+  - Style BottomSheet: rounded top corners (borderRadius 24)
+  - Smooth page transitions (fade + slide)
+
+--- CORE NETWORKING (api_client.dart) ---
+
+Build a Dio-based API client:
+  - Base URL loaded from flutter_dotenv (.env file with API_BASE_URL)
+  - Request interceptor: attach JWT from secure storage as "Authorization: Bearer <token>"
+  - Response interceptor: handle 401 (clear token, redirect to login)
+  - Error interceptor: map DioExceptions to typed ApiException subclasses
+  - Timeout: connect=10s, receive=15s
+  - Expose as a Riverpod provider
+
+API endpoints constants (api_endpoints.dart) — define ALL backend paths:
+  Auth:
+    POST /api/auth/google
+    POST /api/auth/apple (placeholder)
+  Users:
+    GET  /api/users
+    PUT  /api/users
+    GET  /api/users/locations
+    POST /api/users/locations
+    DELETE /api/users/locations/:label
+  Crises:
+    GET /api/crises/near?lat=&lng=&radius=
+    GET /api/crises/search?event_type=&severity_min=&severity_max=&since=&until=&confirmed=
+    GET /api/crises/verified
+    GET /api/crises
+  Source Posts:
+    GET /api/source-posts/nearby?lat=&lng=&radius=
+    GET /api/source-posts/recent?minutes=
+  Unified Posts:
+    GET /api/unified-posts/near?lat=&lng=&radius=
+    GET /api/unified-posts/:id
+  Alerts:
+    GET /api/alerts/recent?hours=
+    GET /api/alerts
+  Subscriptions:
+    POST /api/subscribe
+    DELETE /api/subscribe/:id
+  Community Reports:
+    POST /api/community-reports
+    GET  /api/community-reports/near?lat=&lng=&radius=
+    GET  /api/community-reports
+    GET  /api/community-reports/:id
+  SOS:
+    POST /api/sos/profiles
+    GET  /api/sos/profiles?user_id=
+    PUT  /api/sos/profiles/:id
+    DELETE /api/sos/profiles/:id
+    POST /api/sos/trigger/:profileId  (body: { lat, lng })
+    POST /api/sos/resolve/:id
+    GET  /api/sos/active?user_id=
+  Responders:
+    POST /api/responders/register
+    GET  /api/responders/me?user_id=
+    PUT  /api/responders/me
+    GET  /api/responders/near?lat=&lng=&radius=
+    POST /api/responders/respond/:alertId  (body: { alert_kind })
+    PUT  /api/responders/response/:id/status  (body: { status })
+    PUT  /api/responders/response/:id/rate  (body: { rating })
+  Upload:
+    GET  /api/upload/presign?type=&name=&folder=
+    GET  /api/upload/retrieve?path=&expiry=
+    POST /api/upload/direct (multipart)
+    GET  /api/upload/verify?path=
+  Analytics:
+    GET /api/analytics/trends?event_type=&days=
+    GET /api/analytics/heatmap?lat=&lng=&radius=
+  Query:
+    GET /api/query?text=&lat=&lng=&radius=
+  Health:
+    GET /health
+  WebSocket:
+    ws://host/ws/alerts (real-time alert stream)
+
+--- DATA MODELS ---
+
+Create Dart model classes with fromJson/toJson for these backend types.
+Use freezed + json_serializable for codegen. Place each in the relevant feature's
+data/models/ folder. For stage 1, create ALL models now so later stages can use them:
+
+User model (features/auth/data/models/user_model.dart):
+  - id (String)
+  - firebaseUid (String, json: firebase_uid)
+  - email (String)
+  - name (String)
+  - picture (String)
+  - role (String)
+  - savedLocations (List<SavedLocation>)
+  - createdAt (DateTime, json: created_at)
+  - updatedAt (DateTime, json: updated_at)
+
+SavedLocation (put in user models or a shared models folder):
+  - label (String)
+  - location (GeoJSONPoint)
+  - lat (double)
+  - lng (double)
+  - radiusKm (double, json: radius_km)
+
+GeoJSONPoint (core/models/geo_json.dart — shared):
+  - type (String)
+  - coordinates (List<double>) — [lng, lat]
+  Helper getters: double get lat => coordinates[1]; double get lng => coordinates[0];
+
+AuthResponse (features/auth/data/models/auth_response.dart):
+  - token (String)
+  - user (User)
+
+Crisis (features/home/data/models/crisis_model.dart):
+  - id (String)
+  - unifiedPostId (String, json: unified_post_id)
+  - event (String)
+  - location (GeoJSONPoint)
+  - lat (double)
+  - lng (double)
+  - severity (int)
+  - confirmed (bool)
+  - sources (List<String>)
+  - description (String)
+  - imageUrls (List<String>, json: image_urls)
+  - startTime (DateTime, json: start_time)
+  - lastUpdated (DateTime, json: last_updated)
+
+UnifiedPost (features/home/data/models/unified_post_model.dart):
+  - id (String)
+  - clusterId (String, json: cluster_id)
+  - eventType (String, json: event_type)
+  - summary (String)
+  - location (GeoJSONPoint)
+  - lat, lng (double)
+  - severity (int)
+  - confidenceScore (double, json: confidence_score)
+  - sources (List<String>)
+  - contributorCount (int, json: contributor_count)
+  - officialCorroboration (bool, json: official_corroboration)
+  - postIds (List<String>, json: post_ids)
+  - verified (bool)
+  - createdAt, updatedAt (DateTime)
+
+SourcePost (features/home/data/models/source_post_model.dart):
+  - id (String)
+  - source (String)
+  - postId (String, json: post_id)
+  - text (String)
+  - cleanedText (String, json: cleaned_text)
+  - user (String)
+  - timestamp (DateTime)
+  - url (String)
+  - imageUrls (List<String>, json: image_urls)
+  - location (GeoJSONPoint)
+  - locationConfidence (double, json: location_confidence)
+  - locationSource (String, json: location_source)
+  - isRelevant (bool, json: is_relevant)
+  - crisisType (String, json: crisis_type)
+  - severityScore (int, json: severity_score)
+
+Alert (features/alerts/data/models/alert_model.dart):
+  - id (String)
+  - clusterId (String, json: cluster_id)
+  - alertText (String, json: alert_text)
+  - severity (int)
+  - crisisType (String, json: crisis_type)
+  - centroid (GeoJSONPoint)
+  - publishedAt (DateTime, json: published_at)
+  - sourcePlatforms (List<String>, json: source_platforms)
+
+Subscription (features/alerts/data/models/subscription_model.dart):
+  - id (String)
+  - userId (String, json: user_id)
+  - location (GeoJSONPoint)
+  - radiusKm (double, json: radius_km)
+  - crisisTypes (List<String>, json: crisis_types)
+  - active (bool)
+  - createdAt (DateTime, json: created_at)
+
+CommunityReport (features/community/data/models/community_report_model.dart):
+  - id (String)
+  - userId (String, json: user_id)
+  - eventType (String, json: event_type)
+  - description (String)
+  - location (GeoJSONPoint)
+  - lat, lng (double)
+  - mediaUrls (List<String>, json: media_urls)
+  - severityEstimate (String, json: severity_estimate)
+  - peopleAffected (String, json: people_affected)
+  - status (String)
+  - createdAt (DateTime, json: created_at)
+
+SOSProfile (features/sos/data/models/sos_profile_model.dart):
+  - id (String)
+  - userId (String, json: user_id)
+  - label (String)
+  - eventType (String, json: event_type)
+  - severity (int)
+  - messageTemplate (String, json: message_template)
+  - emergencyContacts (List<EmergencyContact>)
+  - active (bool)
+  - createdAt, updatedAt (DateTime)
+
+EmergencyContact:
+  - name (String)
+  - phone (String)
+
+SOSAlert (features/sos/data/models/sos_alert_model.dart):
+  - id (String)
+  - userId (String, json: user_id)
+  - sosProfileId (String, json: sos_profile_id)
+  - label (String)
+  - eventType (String, json: event_type)
+  - location (GeoJSONPoint)
+  - lat, lng (double)
+  - messageTemplate (String, json: message_template)
+  - severity (int)
+  - status (String)
+  - triggeredAt (DateTime, json: triggered_at)
+  - resolvedAt (DateTime?, json: resolved_at)
+
+Responder (features/responder/data/models/responder_model.dart):
+  - id (String)
+  - userId (String, json: user_id)
+  - capabilities (List<String>)
+  - availability (String)
+  - radiusKm (double, json: radius_km)
+  - location (GeoJSONPoint)
+  - lat, lng (double)
+  - responseCount (int, json: response_count)
+  - rating (double)
+  - verified (bool)
+  - active (bool)
+  - createdAt, updatedAt (DateTime)
+
+ResponderResponse (features/responder/data/models/response_model.dart):
+  - id (String)
+  - responderId (String, json: responder_id)
+  - alertId (String, json: alert_id)
+  - alertKind (String, json: alert_kind)
+  - status (String)
+  - startedAt (DateTime?, json: started_at)
+  - completedAt (DateTime?, json: completed_at)
+  - rating (int)
+  - notes (String)
+
+--- SECURE STORAGE ---
+
+Wrap flutter_secure_storage to store/retrieve/delete the JWT token.
+Expose as a Riverpod provider.
+
+--- ROUTING (GoRouter) ---
+
+Set up GoRouter with these initial routes:
+  /splash → SplashScreen
+  /onboarding → OnboardingScreen
+  /login → LoginScreen
+  /home → (placeholder container, built in stage 2)
+
+Add a redirect guard: if no JWT in secure storage → redirect to /login.
+On splash: check for stored JWT, validate it hasnt expired (decode JWT exp claim
+client-side), then route to /home or /login.
+
+--- AUTH FEATURE (COMPLETE) ---
+
+Implement the full Google Sign-In flow:
+1. LoginScreen: beautiful full-screen with app logo, tagline ("Real-time crisis awareness"),
+   subtle animated background (gradient shift or particle effect using flutter_animate),
+   and a prominent "Continue with Google" button styled with the custom theme.
+2. On tap: firebase_auth + google_sign_in → get Firebase ID token.
+3. Send POST /api/auth/google with { "id_token": "<firebase_token>" }.
+4. Receive { "token": "<jwt>", "user": { ... } }.
+5. Store JWT in secure storage.
+6. Store user in a Riverpod StateNotifier/AsyncNotifier (auth_controller.dart).
+7. Navigate to /home.
+
+Auth controller (Riverpod AsyncNotifier):
+  - state: AsyncValue<User?>
+  - signInWithGoogle() → calls repository → updates state
+  - signOut() → clears storage, resets state, navigates to /login
+  - checkAuthStatus() → reads stored JWT, fetches user from GET /api/users
+
+Auth repository (abstract + impl):
+  - googleSignIn(String idToken) → AuthResponse
+  - getUser() → User
+  - updateUser(String name, List<SavedLocation> locations) → User
+  - signOut() → void
+
+--- SPLASH SCREEN ---
+
+Show the CrisisEcho logo centered with a subtle pulse animation.
+Check auth status. If first launch (use shared_preferences flag), go to onboarding.
+If JWT exists and is valid, go to /home. Otherwise go to /login.
+
+--- ONBOARDING SCREEN ---
+
+3 horizontal swipeable pages with:
+  1. "Monitor Crises in Real-Time" — illustration + description
+  2. "Get Alerts That Matter" — illustration + description
+  3. "Help Your Community" — illustration + description
+Each page: large illustration area (use a placeholder Container with icon for now),
+headline, body text, dot indicator, "Next" / "Get Started" button.
+Use smooth PageView transitions with flutter_animate.
+
+--- WHAT TO DELIVER ---
+
+After this stage, the app should:
+  ✓ Compile and run without errors
+  ✓ Show splash → onboarding (first launch) → login screen
+  ✓ Complete Google Sign-In flow that authenticates against the backend
+  ✓ Persist JWT and auto-login on subsequent launches
+  ✓ Have a polished, futuristic dark theme applied globally
+  ✓ Have ALL data models generated and ready for use
+  ✓ Have the full API client with all endpoint constants defined
+  ✓ Route to an empty /home shell after login
+
+Run `dart run build_runner build --delete-conflicting-outputs` after creating
+the freezed/json_serializable models to generate the .g.dart and .freezed.dart files.
+
+
+================================================================================
+STAGE 2 — HOME SCREEN, CRISIS MAP, CRISIS DETAIL & ALERTS FEED
+================================================================================
+
+Continue building the CrisisEcho Flutter app. Stage 1 is complete — we have the project
+scaffold, theme, core networking, all data models, and working Google authentication.
+
+Now build the main app experience: the home screen with bottom navigation, the interactive
+crisis map, crisis detail drill-down, and the alerts feed.
+
+--- BOTTOM NAVIGATION SHELL ---
+
+Create a bottom navigation bar with 5 tabs. Use a custom styled nav bar that fits
+the futuristic theme — semi-transparent background with blur effect, rounded pill
+indicator for the active tab, subtle glow on the active icon.
+
+Tabs:
+  1. Map (icon: map/radar) — crisis map view (default tab)
+  2. Alerts (icon: bell/notification) — alerts feed with badge count
+  3. Report (icon: plus-circle or megaphone) — community report (stage 3)
+  4. SOS (icon: shield/emergency) — SOS profiles & trigger (stage 3)
+  5. Profile (icon: user) — user profile & settings (stage 3)
+
+For tabs 3-5, render a centered placeholder with the tab name and icon for now.
+Use a ShellRoute in GoRouter so the nav bar persists across tab switches.
+
+Update the route config:
+  /home → BottomNavShell
+    /home/map → MapScreen (default)
+    /home/alerts → AlertsScreen
+    /home/report → placeholder
+    /home/sos → placeholder
+    /home/profile → placeholder
+  /crisis/:id → CrisisDetailScreen (pushed on top, no bottom nav)
+  /unified-post/:id → UnifiedPostDetailScreen (pushed on top)
+
+--- MAP SCREEN (features/home/) ---
+
+This is the core screen. It shows an interactive Google Map with crisis markers.
+
+Structure:
+  features/home/
+  ├── data/
+  │   ├── repositories/
+  │   │   └── crisis_repository.dart      # CrisisRepository impl
+  │   └── models/                         # (already created in stage 1)
+  ├── domain/
+  │   └── repositories/
+  │       └── crisis_repository.dart      # Abstract interface
+  └── presentation/
+      ├── screens/
+      │   ├── map_screen.dart             # Main map view
+      │   └── crisis_detail_screen.dart   # Full crisis detail
+      ├── widgets/
+      │   ├── crisis_map.dart             # Google Map widget wrapper
+      │   ├── crisis_marker_info.dart     # Bottom sheet preview on marker tap
+      │   ├── map_filter_bar.dart         # Horizontal filter chips (event type, severity)
+      │   ├── location_search_bar.dart    # Search bar overlay at top
+      │   ├── severity_badge.dart         # Colored severity indicator widget
+      │   └── crisis_card.dart            # Reusable crisis summary card
+      └── controllers/
+          ├── map_controller.dart         # Riverpod controller for map state
+          └── crisis_detail_controller.dart
+
+Crisis repository interface:
+  - getNearby(double lat, double lng, double radiusKm) → List<Crisis>
+  - search(CrisisFilter filter) → List<Crisis>
+  - getVerified() → List<Crisis>
+  - getAll() → List<Crisis>
+
+Crisis repository implementation:
+  - Uses ApiClient (Dio) to call the backend endpoints
+  - Returns parsed model objects
+
+Map controller (Riverpod AsyncNotifier):
+  - State holds: list of crises, current map center (lat/lng), current radius,
+    active filters (event type, severity range), loading state
+  - loadCrises(lat, lng, radius) → fetches from GET /api/crises/near
+  - applyFilter(eventType, severityMin, severityMax) → fetches from GET /api/crises/search
+  - refreshCrises() → re-fetch with current params
+  - On init: get device location via geolocator, load crises near that location
+
+Map screen layout:
+  - Full-screen Google Map as the base layer (dark map style to match theme)
+  - Custom map style JSON for dark mode (provide a dark style that complements the theme)
+  - Floating search bar at the top (semi-transparent, rounded, with location icon)
+  - Horizontal filter chip row below the search bar:
+    Chips: "All", "Earthquake", "Flood", "Fire", "Storm", "Conflict", etc.
+    Plus severity range selector
+  - "My Location" FAB in bottom-right corner
+  - Crisis markers on the map:
+    - Custom marker appearance based on severity (color-coded using the severity gradient)
+    - Use different marker icons per event type if feasible, otherwise colored circles
+    - Marker size scales slightly with severity
+  - On marker tap: slide up a preview bottom sheet (crisis_marker_info.dart)
+
+Crisis marker info (bottom sheet preview):
+  - Appears as a small card sliding up from the bottom when a marker is tapped
+  - Shows: event type icon + label, severity badge (colored), description (2 lines),
+    time ago (e.g. "2h ago"), source count, "View Details →" button
+  - Tapping "View Details" navigates to /crisis/:id
+  - Smooth spring animation on appear/dismiss
+
+Crisis detail screen (/crisis/:id):
+  - Hero header: small map showing the crisis location pinned, or a gradient header
+    with event type icon
+  - Section: Event info
+    - Event type + severity badge (large)
+    - Description (full text)
+    - Confirmed/unconfirmed status indicator
+    - Time: "Started X ago" + exact timestamp
+    - Last updated timestamp
+  - Section: Sources
+    - List of source platform chips (twitter, reddit, usgs, etc.)
+    - Source count
+  - Section: Related Data
+    - Button to view the linked UnifiedPost (navigate to /unified-post/:id using unifiedPostId)
+    - Button/section to show nearby source posts
+  - Section: Images
+    - Horizontal scrollable image gallery from imageUrls (use cached_network_image)
+    - Tap to view full-screen
+  - Section: Location
+    - Mini static map showing the crisis pin
+    - Coordinates displayed in monospace font
+    - "Get Directions" button (opens native maps app)
+  - Use a SliverAppBar with the map/gradient collapsing on scroll
+
+UnifiedPost detail screen (/unified-post/:id):
+  - Fetch from GET /api/unified-posts/:id
+  - Display: summary, event type, severity, confidence score (as a percentage bar),
+    sources list, contributor count, official corroboration badge, verified status,
+    list of post IDs (count), timestamps
+  - Similar visual style to crisis detail but focused on the synthesis data
+
+--- ALERTS FEED (features/alerts/) ---
+
+Structure:
+  features/alerts/
+  ├── data/
+  │   └── repositories/
+  │       └── alert_repository.dart
+  ├── domain/
+  │   └── repositories/
+  │       └── alert_repository.dart
+  └── presentation/
+      ├── screens/
+      │   └── alerts_screen.dart
+      ├── widgets/
+      │   ├── alert_card.dart
+      │   └── alert_empty_state.dart
+      └── controllers/
+          └── alerts_controller.dart
+
+Alert repository:
+  - getRecent(int hours) → List<Alert>
+  - getAll() → List<Alert>
+
+Alerts controller (Riverpod AsyncNotifier):
+  - Loads recent alerts (default 24h)
+  - Pull-to-refresh support
+  - Filter by hours dropdown (6h, 12h, 24h, 48h, 7d)
+
+Alerts screen:
+  - Sticky header with title "Alerts" and time range dropdown
+  - Scrollable list of AlertCard widgets
+  - Each AlertCard:
+    - Left edge: colored severity strip (thin vertical bar, color from severity)
+    - Crisis type icon + label
+    - Alert text (2-3 lines)
+    - Source platform chips (small, inline)
+    - "X minutes/hours ago" timestamp
+    - Tap → navigate to the related crisis on the map (center map on alert centroid)
+  - Empty state: illustration + "No recent alerts — all clear!" message
+  - Pull-to-refresh with a custom refresh indicator matching the theme
+  - Shimmer loading skeletons while data loads
+
+--- SHARED WIDGETS ---
+
+Create these reusable widgets in a shared location (lib/core/widgets/ or lib/shared/widgets/):
+  - SeverityBadge: takes int severity (1-10), renders colored pill with level text
+  - EventTypeChip: takes string eventType, renders styled chip with appropriate icon
+  - SourceChip: takes string source name (twitter, reddit, usgs etc), renders branded chip
+  - TimeAgo: takes DateTime, renders human-readable relative time
+  - LoadingShimmer: configurable shimmer placeholder matching card layouts
+  - EmptyState: icon + title + subtitle + optional action button
+  - GlassCard: frosted glass effect card (BackdropFilter + opacity) for the futuristic feel
+
+--- WHAT TO DELIVER ---
+
+After this stage, the app should:
+  ✓ Show bottom navigation with 5 tabs (3 are placeholders)
+  ✓ Display an interactive dark-styled Google Map with crisis markers
+  ✓ Color-code markers by severity
+  ✓ Show a preview card when tapping a marker
+  ✓ Navigate to a full crisis detail screen with all data displayed
+  ✓ Navigate to unified post detail from crisis detail
+  ✓ Show an alerts feed with time-range filtering and pull-to-refresh
+  ✓ Proper loading states (shimmer) and empty states everywhere
+  ✓ All animations smooth and polished
+  ✓ Filter crises by event type and severity from the map screen
+
+
+================================================================================
+STAGE 3 — COMMUNITY REPORTS, SOS, USER PROFILE & SUBSCRIPTIONS
+================================================================================
+
+Continue building the CrisisEcho Flutter app. Stages 1-2 are complete — we have auth,
+the crisis map with detail screens, and the alerts feed. Now build the remaining 3 tabs:
+community reporting, SOS emergency, and user profile with notification subscriptions.
+
+--- COMMUNITY REPORTS (features/community/) — Tab 3 ("Report") ---
+
+Structure:
+  features/community/
+  ├── data/
+  │   └── repositories/
+  │       └── community_repository.dart
+  ├── domain/
+  │   └── repositories/
+  │       └── community_repository.dart
+  └── presentation/
+      ├── screens/
+      │   ├── community_feed_screen.dart      # List of nearby reports
+      │   ├── report_detail_screen.dart       # Single report detail
+      │   └── create_report_screen.dart       # Submit a new report
+      ├── widgets/
+      │   ├── report_card.dart
+      │   └── report_form.dart
+      └── controllers/
+          ├── community_feed_controller.dart
+          └── create_report_controller.dart
+
+Community repository:
+  - getNearby(lat, lng, radiusKm) → List<CommunityReport>
+  - getAll() → List<CommunityReport>
+  - getById(id) → CommunityReport
+  - create(CommunityReport) → CommunityReport
+
+Community feed screen (the tab content):
+  - Toggle between "Nearby" and "All" views at the top
+  - "Nearby" uses device location + configurable radius
+  - List of ReportCard widgets
+  - FAB: "Report Crisis" button (prominent, themed, slight glow effect)
+  - Tap card → report detail screen
+  - Pull-to-refresh, shimmer loading, empty state
+
+ReportCard widget:
+  - Event type icon + label, severity estimate badge
+  - Description preview (2 lines, ellipsis)
+  - Location info (if available), time ago
+  - Media thumbnail strip (if mediaUrls exist)
+  - Status chip (submitted, reviewing, verified, etc.)
+
+Report detail screen:
+  - Full description
+  - Event type + severity estimate
+  - People affected info
+  - Media gallery (horizontal scroll, tap for full-screen)
+  - Mini map with pin
+  - Reporter info (anonymized)
+  - Status + timestamp
+
+Create report screen:
+  - Step-by-step form or single scrollable form, whichever feels cleaner
+  - Fields:
+    - Event type: dropdown/selector with icons (earthquake, flood, fire, storm, etc.)
+    - Description: multiline text field
+    - Location: auto-fill from device GPS, with option to pick on map
+      (open a map picker screen where user taps to place a pin)
+    - Media: image picker (camera + gallery), show thumbnails of selected images
+      Upload via POST /api/upload/direct, store returned URLs
+    - Severity estimate: segmented control or slider (low / medium / high / critical)
+    - People affected: text field (optional)
+  - "Submit Report" button
+  - On submit: POST /api/community-reports with the assembled payload
+  - Show success animation (checkmark with confetti or pulse) then navigate back to feed
+  - Loading state on the button during submission
+  - Validation: require event_type and description at minimum
+
+Map location picker (shared widget):
+  - Full-screen Google Map
+  - Crosshair in center or draggable marker
+  - "Confirm Location" button at bottom
+  - Returns lat/lng to the caller
+  - Address reverse-geocoded and shown at the top
+
+--- SOS EMERGENCY (features/sos/) — Tab 4 ("SOS") ---
+
+Structure:
+  features/sos/
+  ├── data/
+  │   └── repositories/
+  │       └── sos_repository.dart
+  ├── domain/
+  │   └── repositories/
+  │       └── sos_repository.dart
+  └── presentation/
+      ├── screens/
+      │   ├── sos_home_screen.dart            # Main SOS tab view
+      │   ├── sos_profile_form_screen.dart    # Create/edit SOS profile
+      │   └── sos_active_screen.dart          # Active SOS alert view
+      ├── widgets/
+      │   ├── sos_profile_card.dart
+      │   ├── sos_trigger_button.dart         # Big panic button
+      │   └── sos_active_alert_card.dart
+      └── controllers/
+          ├── sos_controller.dart
+          └── sos_trigger_controller.dart
+
+SOS repository:
+  - getProfiles(userId) → List<SOSProfile>
+  - createProfile(SOSProfile) → SOSProfile
+  - updateProfile(id, SOSProfile) → SOSProfile
+  - deleteProfile(id) → void
+  - triggerSOS(profileId, lat, lng) → SOSAlert
+  - resolveAlert(alertId) → void
+  - getActiveAlerts(userId) → List<SOSAlert>
+
+SOS home screen:
+  - Top section: large "SOS" trigger area
+    - If user has profiles: show a large, prominent circular button with pulsing
+      animation ring around it (red glow, feels urgent but not accidental)
+    - The button should require a long-press (3 seconds) or swipe-to-confirm to
+      prevent accidental triggers
+    - Below: dropdown to select which SOS profile to trigger
+  - If user has active SOS alerts: show them prominently at the top with a
+    "Resolve" button and live status
+  - Middle section: "Your SOS Profiles" header + list of SOSProfileCard widgets
+  - Each SOSProfileCard:
+    - Label, event type, severity level
+    - Emergency contacts count
+    - Active/inactive toggle
+    - Edit / Delete actions (swipe or menu)
+  - FAB or "Add Profile" button → opens profile form
+  - Empty state: "Set up your emergency SOS profile to alert contacts during a crisis"
+
+SOS profile form screen:
+  - Fields:
+    - Label: text field (e.g. "Earthquake Emergency")
+    - Event type: selector
+    - Severity: number picker (1-10)
+    - Message template: multiline text field with placeholder example
+      (e.g. "I need help! Earthquake at my location. Please send assistance.")
+    - Emergency contacts: dynamic list
+      Each entry: name + phone number fields
+      "Add Contact" button to append another entry
+      Swipe to remove
+    - Active: toggle switch
+  - Save button → POST or PUT depending on create/edit mode
+  - Validation: label, event_type, at least 1 emergency contact required
+
+SOS trigger flow:
+  1. User long-presses the SOS button (3 seconds, with countdown animation)
+  2. Get device location via geolocator
+  3. POST /api/sos/trigger/:profileId with { lat, lng }
+  4. On success: navigate to active SOS alert view with pulsing "ACTIVE" indicator
+  5. Show alert details: location, time triggered, status
+  6. "Resolve" button to end the alert
+
+--- USER PROFILE (features/profile/) — Tab 5 ("Profile") ---
+
+Structure:
+  features/profile/
+  ├── presentation/
+  │   ├── screens/
+  │   │   ├── profile_screen.dart           # Main profile view
+  │   │   ├── edit_profile_screen.dart      # Edit name
+  │   │   ├── saved_locations_screen.dart   # Manage saved locations
+  │   │   └── subscriptions_screen.dart     # Manage alert subscriptions
+  │   ├── widgets/
+  │   │   ├── profile_header.dart
+  │   │   ├── saved_location_card.dart
+  │   │   └── subscription_card.dart
+  │   └── controllers/
+  │       ├── profile_controller.dart
+  │       └── subscription_controller.dart
+
+Profile screen:
+  - Profile header:
+    - User avatar (from Google picture or initials fallback)
+    - Name, email, role badge ("free")
+    - "Edit Profile" button
+  - Settings sections (list tiles with icons, grouped):
+    Section "My Locations":
+      - "Saved Locations" → navigate to saved locations screen
+      - Shows count of saved locations as trailing badge
+    Section "Notifications":
+      - "Alert Subscriptions" → navigate to subscriptions screen
+      - Shows active subscription count
+    Section "Emergency":
+      - "SOS Profiles" → navigate to SOS tab
+      - "Responder Profile" → placeholder (stage 4)
+    Section "App":
+      - "Theme" → toggle light/dark mode
+      - "About CrisisEcho" → version info, attribution
+      - "Sign Out" → confirm dialog, then sign out
+
+Edit profile screen:
+  - Name text field (pre-filled)
+  - Save button → PUT /api/users with updated name
+  - Simple, clean form
+
+Saved locations screen:
+  - List of SavedLocationCard widgets
+  - Each card: label, lat/lng in monospace, radius in km, mini static map thumbnail
+  - Swipe to delete (DELETE /api/users/locations/:label)
+  - FAB "Add Location" → opens a form:
+    - Label text field
+    - Location picker (reuse the map picker from community reports)
+    - Radius slider (1-100 km, default 25)
+    - Save → POST /api/users/locations
+  - Empty state: "Save locations you want to monitor for crisis activity"
+
+Subscriptions screen:
+  - Manage alert subscriptions (POST /api/subscribe, DELETE /api/subscribe/:id)
+  - List of SubscriptionCard widgets:
+    - Location description (reverse geocode the point, or show lat/lng)
+    - Radius
+    - Crisis types filter chips
+    - Active status toggle
+    - Delete action
+  - "Add Subscription" button → form:
+    - Location picker (map)
+    - Radius slider
+    - Crisis types: multi-select chips (All, Earthquake, Flood, Fire, Storm, etc.)
+    - Save → POST /api/subscribe
+  - Empty state: "Subscribe to areas to get notified about nearby crises"
+
+Subscription controller:
+  - getSubscriptions() — Note: the backend doesn't have a list endpoint, so either
+    store subscriptions locally alongside the API, or only show a "create new" flow.
+    For now, show a create form and explain to user that subscriptions are being set up.
+    If user has saved locations, suggest subscribing to those areas.
+
+--- UPLOAD SERVICE (shared) ---
+
+Create a reusable upload service (core/services/upload_service.dart):
+  - uploadImage(File file, {String folder = "community-reports"}) → String (public URL)
+  - Uses POST /api/upload/direct with multipart form data
+  - Returns the publicUrl from the response
+  - Shows upload progress if possible
+  - Expose as a Riverpod provider
+
+--- WHAT TO DELIVER ---
+
+After this stage, the app should:
+  ✓ Community tab: view nearby reports, submit new reports with photos and location
+  ✓ SOS tab: create SOS profiles with emergency contacts, trigger SOS with long-press
+  ✓ Profile tab: view/edit profile, manage saved locations, manage subscriptions
+  ✓ Image upload working for community reports
+  ✓ Map location picker reusable across features
+  ✓ All forms validated with proper error states
+  ✓ Success/error feedback (snackbars, animations)
+  ✓ Consistent styling across all new screens
+  ✓ Sign out working and clearing all state
+
+
+================================================================================
+STAGE 4 — REAL-TIME WEBSOCKET, RESPONDERS, AI QUERY, ANALYTICS & POLISH
+================================================================================
+
+Continue building the CrisisEcho Flutter app. Stages 1-3 are complete — we have auth,
+crisis map, alerts feed, community reports, SOS, and user profile. Now add the remaining
+features, real-time capabilities, and polish the entire app for production readiness.
+
+--- REAL-TIME ALERT STREAMING (WebSocket) ---
+
+Create a WebSocket service (core/network/websocket_service.dart):
+  - Connect to ws://<host>/ws/alerts
+  - Auto-reconnect with exponential backoff (1s, 2s, 4s, 8s, max 30s)
+  - Parse incoming JSON messages as Alert objects
+  - Expose as a Riverpod StreamProvider so any screen can listen
+  - On new alert received:
+    - Add to the alerts feed list (prepend)
+    - If alert location is within any of the user's saved locations radius,
+      show an in-app notification banner (overlay at the top, auto-dismiss after 5s)
+    - Optional: if app is in background, trigger a local notification
+      (use flutter_local_notifications if you want, otherwise skip for now)
+
+In-app alert banner widget (core/widgets/alert_banner.dart):
+  - Slides down from the top of the screen
+  - Shows: severity color strip, crisis type, alert text (1 line), "View" button
+  - Tapping navigates to the crisis on the map
+  - Auto-dismisses after 5 seconds, or swipe up to dismiss
+  - Stack multiple banners if several arrive in quick succession
+
+Update AlertsScreen:
+  - Combine the HTTP-fetched alerts with the WebSocket stream
+  - New alerts appear at the top with a subtle "new" animation (fade in + slide down)
+  - Show a "live" indicator dot (pulsing green) when WebSocket is connected
+
+Update MapScreen:
+  - When a new alert arrives via WebSocket, add/update the corresponding crisis marker
+    on the map with a brief pulse animation on the marker
+
+--- RESPONDER FEATURE (features/responder/) ---
+
+Structure:
+  features/responder/
+  ├── data/
+  │   └── repositories/
+  │       └── responder_repository.dart
+  ├── domain/
+  │   └── repositories/
+  │       └── responder_repository.dart
+  └── presentation/
+      ├── screens/
+      │   ├── responder_registration_screen.dart
+      │   ├── responder_profile_screen.dart
+      │   └── nearby_responders_screen.dart
+      ├── widgets/
+      │   ├── responder_card.dart
+      │   ├── capability_selector.dart
+      │   └── response_card.dart
+      └── controllers/
+          └── responder_controller.dart
+
+Responder repository:
+  - register(Responder) → Responder
+  - getProfile(userId) → Responder
+  - updateProfile(Responder) → Responder
+  - getNearby(lat, lng, radiusKm) → List<Responder>
+  - respondToAlert(alertId, alertKind) → ResponderResponse
+  - updateResponseStatus(responseId, status) → ResponderResponse
+  - rateResponse(responseId, rating) → ResponderResponse
+
+Fill in the "Responder Profile" tile in the Profile screen:
+  - If not registered: navigate to registration form
+  - If registered: navigate to responder profile screen
+
+Responder registration screen:
+  - Fields:
+    - Capabilities: multi-select chips (First Aid, Search & Rescue, Medical, Fire,
+      Logistics, Translation, Shelter, Transport, etc.)
+    - Availability: selector (available, busy, offline)
+    - Radius: slider (1-50 km)
+    - Location: auto from GPS or pick on map
+  - Register button → POST /api/responders/register
+
+Responder profile screen:
+  - Show profile info: capabilities, availability, radius, location
+  - Stats: response count, rating (stars)
+  - Verified badge if verified
+  - "Edit Profile" button → pre-filled form, PUT /api/responders/me
+  - "View Nearby Responders" button → nearby responders screen
+
+Nearby responders screen:
+  - Map view showing responder markers (different icon from crisis markers)
+  - List view below the map
+  - Each ResponderCard: capabilities chips, availability status dot (green/yellow/red),
+    rating stars, distance from user, verified badge
+  - Pull-to-refresh
+
+Add "Respond" button to CrisisDetailScreen:
+  - Only visible if user is a registered responder
+  - Tap → POST /api/responders/respond/:crisisId with { alert_kind: "crisis" }
+  - Show confirmation: "You've signed up to respond to this crisis"
+  - Track response status
+
+--- AI QUERY / SEARCH (features/query/) ---
+
+Structure:
+  features/query/
+  └── presentation/
+      ├── screens/
+      │   └── query_screen.dart
+      ├── widgets/
+      │   ├── query_input.dart
+      │   └── query_result.dart
+      └── controllers/
+          └── query_controller.dart
+
+Add a search/query entry point — this can be accessed from:
+  - The search bar on the map screen (tap opens query screen)
+  - Or a dedicated entry in the app
+
+Query screen:
+  - Text input field with placeholder: "Ask about any crisis situation..."
+  - Examples below input (tappable): "What earthquakes happened today?",
+    "Is there flooding near Lagos?", "Recent fires in California"
+  - On submit: GET /api/query?text=<query>&lat=<lat>&lng=<lng>&radius=50
+  - Show result: the "digest" text formatted as a readable summary
+  - Below: list of related clusters (if returned), each tappable to view on map
+  - Loading: show a typing/thinking animation while waiting for the LLM response
+  - Handle the case where the query endpoint isn't available (GOOGLE_API_KEY not set)
+    gracefully — show "AI search is not available" message
+
+--- ANALYTICS SCREEN (features/analytics/) ---
+
+Add analytics as a section accessible from the Profile screen or as a header
+widget on the map screen.
+
+Structure:
+  features/analytics/
+  ├── data/
+  │   └── repositories/
+  │       └── analytics_repository.dart
+  └── presentation/
+      ├── screens/
+      │   └── analytics_screen.dart
+      ├── widgets/
+      │   ├── trend_chart.dart
+      │   └── heatmap_legend.dart
+      └── controllers/
+          └── analytics_controller.dart
+
+Analytics repository:
+  - getTrends(eventType, days) → List<Map<String, dynamic>>
+  - getHeatmap(lat, lng, radiusKm) → List<Map<String, dynamic>>
+
+Analytics screen:
+  - Time range selector: 7d, 14d, 30d, 90d
+  - Event type filter dropdown
+  - Trend visualization: use a simple chart (fl_chart package or just custom painted bars)
+    showing crisis count over time, grouped by event type with colored segments
+  - Stats summary cards at the top:
+    - Total crises in period
+    - Average severity
+    - Most common event type
+    - Active alerts count
+  - Heatmap data: display as a data table or overlay on a mini map
+    (showing density of crises in the selected region)
+
+Add an "Analytics" tile to the Profile screen under a "Data" section.
+
+--- GLOBAL POLISH ---
+
+Now go through every screen and ensure:
+
+1. Loading states:
+   - Every data-fetching screen shows shimmer placeholders (not just spinners)
+   - Shimmer shapes match the actual content layout
+   - Loading indicators on buttons during async operations
+
+2. Error states:
+   - Network errors: "No internet connection" with retry button
+   - Server errors: "Something went wrong" with retry button
+   - Not found: appropriate message
+   - Use a reusable ErrorState widget
+
+3. Empty states:
+   - Every list screen has a themed empty state with illustration placeholder and message
+   - Actionable empty states where appropriate (e.g. "No reports yet — submit one!")
+
+4. Animations & transitions:
+   - Page transitions: smooth fade + slide (already in theme, verify it works)
+   - List items: stagger-animate in on first load (flutter_animate, 50ms stagger)
+   - Cards: subtle scale on press (0.98 scale, 100ms)
+   - Bottom sheet: smooth spring animation
+   - Marker tap: marker briefly pulses/bounces
+   - Tab switch: crossfade content
+
+5. Pull-to-refresh:
+   - All list screens support pull-to-refresh
+   - Custom refresh indicator matching the theme color
+
+6. Accessibility:
+   - Semantic labels on all icons and interactive elements
+   - Sufficient color contrast (the theme should already handle this)
+   - Text scales with system font size
+
+7. Responsive layout:
+   - Test on small (iPhone SE) and large (iPhone 15 Pro Max / Pixel 8 Pro) screens
+   - Cards and lists should adapt — no overflow, no empty space waste
+   - Map should fill available space properly
+
+8. State management audit:
+   - Ensure all Riverpod providers are properly scoped
+   - No unnecessary rebuilds
+   - Providers that depend on auth state are invalidated on sign-out
+   - Auto-dispose providers where appropriate (screens that aren't always visible)
+
+9. App icon & splash:
+   - Set up a placeholder app icon (can be a simple gradient circle with "CE" text)
+   - Native splash screen matching the dark theme background color
+   - Use flutter_native_splash if desired
+
+--- WHAT TO DELIVER ---
+
+After this stage, the app should:
+  ✓ Receive real-time alerts via WebSocket with in-app notification banners
+  ✓ WebSocket auto-reconnects on disconnect
+  ✓ Alerts feed shows live indicator and updates in real-time
+  ✓ Responder registration, profile, and nearby responders view working
+  ✓ "Respond" action on crisis detail for registered responders
+  ✓ AI-powered natural language crisis search working
+  ✓ Analytics screen with trend visualization and summary stats
+  ✓ Every screen has proper loading, error, and empty states
+  ✓ Smooth animations and transitions throughout
+  ✓ Pull-to-refresh on all list screens
+  ✓ No compile errors, no runtime crashes on happy path
+  ✓ Clean, consistent code following the established patterns
+  ✓ App feels polished, futuristic, and production-ready
+
+
+================================================================================
+END OF PROMPTS
+================================================================================

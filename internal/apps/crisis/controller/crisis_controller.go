@@ -2,6 +2,7 @@ package controller
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 
@@ -23,6 +24,7 @@ func NewCrisisController(svc service.CrisisService) *CrisisController {
 // /near and /verified are registered before / to avoid route conflicts.
 func (c *CrisisController) RegisterRoutes(router fiber.Router) {
 	router.Get("/near", c.GetNear)
+	router.Get("/search", c.SearchCrises)
 	router.Get("/verified", c.GetVerifiedCrises)
 	router.Get("/", c.GetAllCrises)
 }
@@ -57,6 +59,38 @@ func (c *CrisisController) GetNear(ctx *fiber.Ctx) error {
 // Returns only confirmed crisis events.
 func (c *CrisisController) GetVerifiedCrises(ctx *fiber.Ctx) error {
 	crises, err := c.svc.GetVerifiedCrises(ctx.UserContext())
+	if err != nil {
+		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+	if crises == nil {
+		crises = []*model.Crisis{}
+	}
+	return ctx.JSON(crises)
+}
+
+// GET /api/crises/search?event_type=&severity_min=&severity_max=&since=&until=&confirmed=
+// Returns crises matching the given filter criteria.
+func (c *CrisisController) SearchCrises(ctx *fiber.Ctx) error {
+	var filter model.CrisisFilter
+	filter.EventType = ctx.Query("event_type")
+	filter.SeverityMin, _ = strconv.Atoi(ctx.Query("severity_min"))
+	filter.SeverityMax, _ = strconv.Atoi(ctx.Query("severity_max"))
+	if since := ctx.Query("since"); since != "" {
+		if t, err := time.Parse(time.RFC3339, since); err == nil {
+			filter.Since = &t
+		}
+	}
+	if until := ctx.Query("until"); until != "" {
+		if t, err := time.Parse(time.RFC3339, until); err == nil {
+			filter.Until = &t
+		}
+	}
+	if confirmed := ctx.Query("confirmed"); confirmed != "" {
+		b := confirmed == "true"
+		filter.Confirmed = &b
+	}
+
+	crises, err := c.svc.SearchCrises(ctx.UserContext(), filter)
 	if err != nil {
 		return ctx.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
 	}

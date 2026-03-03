@@ -12,9 +12,17 @@ import (
 	alertCtrl "crisisecho/internal/apps/alert/controller"
 	alertRepo "crisisecho/internal/apps/alert/repository"
 	alertSvc "crisisecho/internal/apps/alert/service"
+	authCtrl "crisisecho/internal/apps/auth/controller"
+	authSvc "crisisecho/internal/apps/auth/service"
+	analyticsCtrl "crisisecho/internal/apps/analytics/controller"
+	analyticsRepo "crisisecho/internal/apps/analytics/repository"
+	analyticsSvc "crisisecho/internal/apps/analytics/service"
 	clusterCtrl "crisisecho/internal/apps/cluster/controller"
 	clusterRepo "crisisecho/internal/apps/cluster/repository"
 	clusterSvc "crisisecho/internal/apps/cluster/service"
+	communityCtrl "crisisecho/internal/apps/community/controller"
+	communityRepo "crisisecho/internal/apps/community/repository"
+	communitySvc "crisisecho/internal/apps/community/service"
 	crisisCtrl "crisisecho/internal/apps/crisis/controller"
 	crisisRepo "crisisecho/internal/apps/crisis/repository"
 	crisisSvc "crisisecho/internal/apps/crisis/service"
@@ -26,13 +34,22 @@ import (
 	postSvc "crisisecho/internal/apps/post/service"
 	queryCtrl "crisisecho/internal/apps/query/controller"
 	querySvc "crisisecho/internal/apps/query/service"
-	ragSvc     "crisisecho/internal/apps/rag/service"
+	ragSvc "crisisecho/internal/apps/rag/service"
+	responderCtrl "crisisecho/internal/apps/responder/controller"
+	responderRepo "crisisecho/internal/apps/responder/repository"
+	responderSvc "crisisecho/internal/apps/responder/service"
+	sosCtrl "crisisecho/internal/apps/sos/controller"
+	sosRepo "crisisecho/internal/apps/sos/repository"
+	sosSvc "crisisecho/internal/apps/sos/service"
 	uploadCtrl "crisisecho/internal/apps/upload/controller"
 	uploadRepo "crisisecho/internal/apps/upload/repository"
-	uploadSvc  "crisisecho/internal/apps/upload/service"
+	uploadSvc "crisisecho/internal/apps/upload/service"
 	unifiedPostCtrl "crisisecho/internal/apps/unifiedpost/controller"
 	unifiedPostRepo "crisisecho/internal/apps/unifiedpost/repository"
 	unifiedPostSvc "crisisecho/internal/apps/unifiedpost/service"
+	userCtrl "crisisecho/internal/apps/user/controller"
+	userRepo "crisisecho/internal/apps/user/repository"
+	userSvc "crisisecho/internal/apps/user/service"
 	"crisisecho/internal/database"
 	locationRepo "crisisecho/internal/database/abstractrepository/location"
 	vectorRepo "crisisecho/internal/database/abstractrepository/vectordb"
@@ -95,9 +112,47 @@ func RegisterRoutes(srv *FiberServer) {
 
 	// === Upload (S3 via AWS SDK) ===
 	uploadRepository := uploadRepo.NewUploadRepository()
-	uploadService    := uploadSvc.NewUploadService(uploadRepository)
+	uploadService := uploadSvc.NewUploadService(uploadRepository)
 	uploadController := uploadCtrl.NewUploadController(uploadService)
 	uploadController.RegisterRoutes(api.Group("/upload"))
+
+	// === User ===
+	userRepository := userRepo.NewUserRepository(mainDB)
+	userService := userSvc.NewUserService(userRepository)
+	userController := userCtrl.NewUserController(userService)
+	userController.RegisterRoutes(api.Group("/users"))
+
+	// === Auth ===
+	authService := authSvc.NewAuthService(userService)
+	authController := authCtrl.NewAuthController(authService)
+	authController.RegisterRoutes(api.Group("/auth"))
+
+	// === Community Reports ===
+	communityRepository := communityRepo.NewCommunityReportRepository(mainDB)
+	communityService := communitySvc.NewCommunityService(communityRepository)
+	communityController := communityCtrl.NewCommunityController(communityService)
+	communityController.RegisterRoutes(api.Group("/community-reports"))
+
+	// === SOS ===
+	sosProfileRepository := sosRepo.NewSOSProfileRepository(mainDB)
+	sosAlertRepository := sosRepo.NewSOSAlertRepository(mainDB)
+	sosService := sosSvc.NewSOSService(sosProfileRepository, sosAlertRepository, srv.RedisClient)
+	sosController := sosCtrl.NewSOSController(sosService)
+	sosController.RegisterRoutes(api.Group("/sos"))
+
+	// === Responder ===
+	responderRepository := responderRepo.NewResponderRepository(mainDB)
+	responseRepository := responderRepo.NewResponseRepository(mainDB)
+	responderService := responderSvc.NewResponderService(responderRepository, responseRepository)
+	responderController := responderCtrl.NewResponderController(responderService)
+	responderController.RegisterRoutes(api.Group("/responders"))
+
+	// === Analytics ===
+	crisesCollection := mainDB.Collection("crises")
+	analyticsRepository := analyticsRepo.NewAnalyticsRepository(mainDB, crisesCollection)
+	analyticsService := analyticsSvc.NewAnalyticsService(analyticsRepository)
+	analyticsController := analyticsCtrl.NewAnalyticsController(analyticsService)
+	analyticsController.RegisterRoutes(api.Group("/analytics"))
 
 	// === Vector + Location (shared infrastructure) ===
 	vr := vectorRepo.NewVectorRepository(

@@ -94,6 +94,41 @@ func GetUnifiedPostsCollection(client *mongo.Client) *mongo.Collection {
 	return mainDB(client).Collection("unified_posts")
 }
 
+// GetUsersCollection returns the users collection from the main database.
+func GetUsersCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("users")
+}
+
+// GetCommunityReportsCollection returns the community_reports collection from the main database.
+func GetCommunityReportsCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("community_reports")
+}
+
+// GetSOSProfilesCollection returns the sos_profiles collection from the main database.
+func GetSOSProfilesCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("sos_profiles")
+}
+
+// GetSOSAlertsCollection returns the sos_alerts collection from the main database.
+func GetSOSAlertsCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("sos_alerts")
+}
+
+// GetRespondersCollection returns the responders collection from the main database.
+func GetRespondersCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("responders")
+}
+
+// GetResponsesCollection returns the responses collection from the main database.
+func GetResponsesCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("responses")
+}
+
+// GetAnalyticsCollection returns the analytics collection from the main database.
+func GetAnalyticsCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("analytics")
+}
+
 // sourceCollectionNames maps source platform names to their MongoDB collection names.
 var sourceCollectionNames = map[string]string{
 	"twitter":     "twitter_posts",

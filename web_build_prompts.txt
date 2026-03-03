@@ -1,0 +1,1584 @@
+================================================================================
+CRISISECHO WEB FRONTEND — 3-STAGE CONTINUATION PROMPTS
+================================================================================
+These prompts build ON TOP of the existing 3-prompt implementation.
+The web app already has: Next.js 15 + Tailwind v4 + Zustand + TanStack Query +
+Leaflet map + WebSocket alerts + sidebar panels + crisis detail page + dark/light
+theme + keyboard shortcuts + toast notifications + mock data.
+
+The existing frontend types/API are WRONG — they don't match the actual Go backend.
+These prompts fix everything, add missing features, and swap to Google Maps.
+
+The web app lives at: crisisecho_client/ (separate repo from the Go backend)
+The Go backend runs at: http://localhost:8080
+================================================================================
+
+
+================================================================================
+STAGE 4 — FIX TYPES, API CLIENT, SOURCE MAP & SWAP TO GOOGLE MAPS
+================================================================================
+
+The existing CrisisEcho web frontend has type definitions and API client functions
+that DO NOT match the actual Go backend. This stage corrects every type, every
+endpoint path, every field name, updates the source map to match active ingestion
+sources, and replaces Leaflet with Google Maps JavaScript API.
+Do NOT break any existing component — update them to use the corrected types.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PACKAGE CHANGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Remove:
+  leaflet react-leaflet @types/leaflet
+  react-leaflet-cluster (or @changey/react-leaflet-markercluster)
+  leaflet.heat @types/leaflet.heat
+
+Install:
+  @vis.gl/react-google-maps
+  firebase
+  @types/google.maps
+
+Also add to .env.local:
+  NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=<your-key>
+  NEXT_PUBLIC_FIREBASE_API_KEY=<your-key>
+  NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=<your-domain>
+  NEXT_PUBLIC_FIREBASE_PROJECT_ID=<your-project-id>
+
+Delete the file types/leaflet.heat.d.ts — no longer needed.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORRECTED TYPESCRIPT TYPES  (types/index.ts) — FULL REPLACEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The existing types are WRONG. The frontend was built with guessed field names
+that don't match the actual Go backend JSON serialization. Below are the
+CORRECT types matching every Go model's json tags exactly.
+
+CRITICAL DIFFERENCES FROM EXISTING TYPES:
+  - Backend uses "id" NOT "_id" (Go json tag is `json:"id"`)
+  - Backend uses time.Time which serializes as ISO 8601 strings, NOT unix numbers
+  - Backend Crisis has "event" not "title", "unified_post_id" not "cluster_ids",
+    "location" not "centroid", "confirmed" not "status", "description" not "summary"
+  - Backend Cluster has "severity" not "severity_score", "sources" (string array)
+    not "source_counts" (record), "post_count" not derived from post_ids length,
+    "status" field, no "radius_m" or "platform_count" or "is_active"
+  - Backend SourcePost uses "cleaned_text" not "clean_text", "user" not "author_id",
+    "post_id" not "source_id", "image_urls" not "images", "severity_score" is int,
+    "location_confidence"/"location_source" not "geo_confidence"/"geo_method"
+  - Backend Alert uses "cluster_id" not "crisis_id", "alert_text" not title/body,
+    "centroid" not "location", "source_platforms" not source array,
+    no "title"/"body"/"radius_m"/"channel" fields
+  - Backend Subscription uses "radius_km" not "radius_m", "active" (bool),
+    no "min_severity"/"channel"/"expires_at"
+
+Replace types/index.ts ENTIRELY with:
+
+interface GeoJSONPoint {
+  type: 'Point'
+  coordinates: [number, number]   // [lng, lat]
+}
+
+interface GeoJSONPolygon {
+  type: 'Polygon'
+  coordinates: [number, number][][]
+}
+
+// ── Backend Model Types (match Go json tags exactly) ─────────────────────
+
+interface SourcePost {
+  id: string
+  source: string
+  post_id: string
+  text: string
+  cleaned_text: string
+  user: string                    // SHA-256 hash of username
+  timestamp: string               // ISO 8601
+  url: string
+  image_urls: string[]
+  location: GeoJSONPoint
+  location_confidence: number
+  location_source: string         // gps|carmen|ner|geo_prior|unresolved
+  is_relevant: boolean
+  crisis_type: string
+  severity_score: number          // 1-10
+  text_embedding_id: string
+  image_embedding_ids: string[]
+  cluster_id: string | null
+  metadata: Record<string, unknown>
+}
+
+interface Cluster {
+  id: string
+  centroid: GeoJSONPoint
+  affected_area: GeoJSONPolygon
+  crisis_type: string
+  severity: number                // 1-10
+  severity_rationale: string
+  summary: string
+  post_count: number
+  contributor_count: number
+  post_ids: string[]
+  sources: string[]
+  official_corroboration: boolean
+  location_confidence: number
+  start_time: string              // ISO 8601
+  last_updated: string            // ISO 8601
+  status: 'active' | 'resolved' | 'monitoring'
+}
+
+interface UnifiedPost {
+  id: string
+  cluster_id: string
+  event_type: string
+  summary: string
+  location: GeoJSONPoint
+  lat: number
+  lng: number
+  severity: number
+  confidence_score: number
+  sources: string[]
+  contributor_count: number
+  official_corroboration: boolean
+  post_ids: string[]
+  verified: boolean
+  created_at: string              // ISO 8601
+  updated_at: string              // ISO 8601
+}
+
+interface Crisis {
+  id: string
+  unified_post_id: string
+  event: string                   // crisis type label (NOT "title")
+  location: GeoJSONPoint
+  lat: number
+  lng: number
+  severity: number                // 1-10
+  confirmed: boolean
+  sources: string[]
+  description: string
+  image_urls: string[]
+  start_time: string              // ISO 8601
+  last_updated: string            // ISO 8601
+}
+
+interface Alert {
+  id: string
+  cluster_id: string
+  alert_text: string
+  severity: number
+  crisis_type: string
+  centroid: GeoJSONPoint
+  published_at: string            // ISO 8601
+  source_platforms: string[]
+  notified_users: string[]
+}
+
+interface Subscription {
+  id: string
+  user_id: string
+  location: GeoJSONPoint
+  radius_km: number
+  crisis_types: string[]          // empty = all
+  active: boolean
+  created_at: string              // ISO 8601
+}
+
+interface User {
+  id: string
+  firebase_uid: string
+  email: string
+  name: string
+  picture: string
+  role: string                    // "free" | "pro" | "admin"
+  saved_locations: SavedLocation[]
+  created_at: string
+  updated_at: string
+}
+
+interface SavedLocation {
+  label: string
+  location: GeoJSONPoint
+  lat: number
+  lng: number
+  radius_km: number
+}
+
+interface AuthResponse {
+  token: string
+  user: User
+}
+
+interface CommunityReport {
+  id: string
+  user_id: string
+  event_type: string
+  description: string
+  location: GeoJSONPoint
+  lat: number
+  lng: number
+  media_urls: string[]
+  severity_estimate: string       // low|medium|high|critical
+  people_affected: string
+  status: string                  // submitted|reviewing|verified|rejected
+  created_at: string
+}
+
+interface SOSProfile {
+  id: string
+  user_id: string
+  label: string
+  event_type: string
+  severity: number
+  message_template: string
+  emergency_contacts: EmergencyContact[]
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface EmergencyContact {
+  name: string
+  phone: string
+}
+
+interface SOSAlert {
+  id: string
+  user_id: string
+  sos_profile_id: string
+  label: string
+  event_type: string
+  location: GeoJSONPoint
+  lat: number
+  lng: number
+  message_template: string
+  severity: number
+  status: string                  // active|resolved
+  triggered_at: string
+  resolved_at: string | null
+}
+
+interface Responder {
+  id: string
+  user_id: string
+  capabilities: string[]
+  availability: string            // available|busy|offline
+  radius_km: number
+  location: GeoJSONPoint
+  lat: number
+  lng: number
+  response_count: number
+  rating: number
+  verified: boolean
+  active: boolean
+  created_at: string
+  updated_at: string
+}
+
+interface ResponderResponse {
+  id: string
+  responder_id: string
+  alert_id: string
+  alert_kind: string              // crisis|sos
+  status: string                  // dispatched|en_route|on_scene|completed
+  started_at: string | null
+  completed_at: string | null
+  rating: number
+  notes: string
+}
+
+interface AnalyticsSummary {
+  id: string
+  region: string
+  period: string
+  period_start: string
+  period_end: string
+  total_crises: number
+  total_alerts: number
+  total_sos_alerts: number
+  event_type_breakdown: Record<string, number>
+  avg_severity: number
+  avg_response_time_minutes: number
+  top_sources: string[]
+  created_at: string
+}
+
+interface CrisisFilter {
+  event_type?: string
+  severity_min?: number
+  severity_max?: number
+  since?: string                  // ISO 8601
+  until?: string                  // ISO 8601
+  confirmed?: boolean
+}
+
+interface UploadPresignResponse {
+  url: string
+  publicUrl: string
+  fileName: string
+  fileType: string
+  filePath: string
+  uploadMethod: string
+  expiresIn: number
+}
+
+interface UploadResponse {
+  publicUrl: string
+  fileName: string
+  fileType: string
+  size: number
+}
+
+interface HealthStatus {
+  status: 'ok' | 'degraded'
+  main_db: 'up' | 'down'
+  location_db: 'up' | 'down'
+  vector_db: 'up' | 'down'
+  redis: 'up' | 'down'
+}
+
+interface QueryResponse {
+  digest: string
+  clusters: Cluster[]
+}
+
+interface SubscriptionPayload {
+  user_id: string
+  location: GeoJSONPoint
+  radius_km: number
+  crisis_types: string[]
+}
+
+Create corresponding Zod schemas for ALL types above, using z.coerce.date() or
+z.string() for ISO date fields. Use .passthrough() on object schemas to tolerate
+extra fields the backend might add. Mark nullable fields with .nullable().
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORRECTED API CLIENT  (lib/api.ts) — FULL REPLACEMENT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The existing API paths are wrong. The backend routes are different from what
+was assumed. Here are ALL the correct endpoint paths and their signatures.
+
+Keep the existing apiFetch helper structure but:
+  - Add an Authorization header if a JWT token exists in localStorage
+  - Support multipart/form-data for upload
+
+Base fetcher enhancement:
+  - Read token from localStorage key "crisisecho_token"
+  - If token exists, add header: Authorization: `Bearer ${token}`
+  - For non-JSON requests (upload), don't set Content-Type (let browser set boundary)
+
+Export these functions (ALL of them — add the ones that don't exist, fix the ones that do):
+
+Auth:
+  googleSignIn(idToken: string): Promise<AuthResponse>
+    → POST /api/auth/google  body: { id_token: idToken }
+
+Users:
+  fetchCurrentUser(): Promise<User>
+    → GET /api/users
+  updateCurrentUser(name: string, savedLocations: SavedLocation[]): Promise<User>
+    → PUT /api/users  body: { name, saved_locations: savedLocations }
+  fetchSavedLocations(): Promise<SavedLocation[]>
+    → GET /api/users/locations
+  addSavedLocation(loc: SavedLocation): Promise<User>
+    → POST /api/users/locations  body: loc
+  deleteSavedLocation(label: string): Promise<User>
+    → DELETE /api/users/locations/${encodeURIComponent(label)}
+
+Crises:
+  fetchNearbyCrises(lat, lng, radiusKm): Promise<Crisis[]>
+    → GET /api/crises/near?lat=&lng=&radius=
+  searchCrises(filter: CrisisFilter): Promise<Crisis[]>
+    → GET /api/crises/search?event_type=&severity_min=&severity_max=&since=&until=&confirmed=
+  fetchVerifiedCrises(): Promise<Crisis[]>
+    → GET /api/crises/verified
+  fetchAllCrises(): Promise<Crisis[]>
+    → GET /api/crises
+
+Source Posts (NOTE: path is /api/source-posts NOT /api/posts):
+  fetchNearbyPosts(lat, lng, radiusKm): Promise<SourcePost[]>
+    → GET /api/source-posts/nearby?lat=&lng=&radius=
+  fetchRecentPosts(minutes): Promise<SourcePost[]>
+    → GET /api/source-posts/recent?minutes=
+
+Unified Posts:
+  fetchNearbyUnifiedPosts(lat, lng, radiusKm): Promise<UnifiedPost[]>
+    → GET /api/unified-posts/near?lat=&lng=&radius=
+  fetchUnifiedPostById(id: string): Promise<UnifiedPost>
+    → GET /api/unified-posts/${id}
+
+Clusters:
+  fetchClusterHotspots(lat, lng, radiusKm): Promise<Cluster[]>
+    → GET /api/clusters/hotspots?lat=&lng=&radius=
+  fetchClusterById(id: string): Promise<Cluster>
+    → GET /api/clusters/${id}
+
+Alerts:
+  fetchRecentAlerts(hours): Promise<Alert[]>
+    → GET /api/alerts/recent?hours=
+  fetchAllAlerts(): Promise<Alert[]>
+    → GET /api/alerts
+
+Subscriptions:
+  createSubscription(payload: SubscriptionPayload): Promise<Subscription>
+    → POST /api/subscribe
+  deleteSubscription(id: string): Promise<void>
+    → DELETE /api/subscribe/${id}
+
+Community Reports:
+  createCommunityReport(report: Partial<CommunityReport>): Promise<CommunityReport>
+    → POST /api/community-reports
+  fetchNearbyCommunityReports(lat, lng, radiusKm): Promise<CommunityReport[]>
+    → GET /api/community-reports/near?lat=&lng=&radius=
+  fetchAllCommunityReports(): Promise<CommunityReport[]>
+    → GET /api/community-reports
+  fetchCommunityReportById(id: string): Promise<CommunityReport>
+    → GET /api/community-reports/${id}
+
+SOS:
+  createSOSProfile(profile: Partial<SOSProfile>): Promise<SOSProfile>
+    → POST /api/sos/profiles
+  fetchSOSProfiles(userId: string): Promise<SOSProfile[]>
+    → GET /api/sos/profiles?user_id=${userId}
+  updateSOSProfile(id: string, profile: Partial<SOSProfile>): Promise<SOSProfile>
+    → PUT /api/sos/profiles/${id}
+  deleteSOSProfile(id: string): Promise<void>
+    → DELETE /api/sos/profiles/${id}
+  triggerSOS(profileId: string, lat: number, lng: number): Promise<SOSAlert>
+    → POST /api/sos/trigger/${profileId}  body: { lat, lng }
+  resolveSOSAlert(id: string): Promise<void>
+    → POST /api/sos/resolve/${id}
+  fetchActiveSOSAlerts(userId: string): Promise<SOSAlert[]>
+    → GET /api/sos/active?user_id=${userId}
+
+Responders:
+  registerResponder(responder: Partial<Responder>): Promise<Responder>
+    → POST /api/responders/register
+  fetchResponderProfile(userId: string): Promise<Responder>
+    → GET /api/responders/me?user_id=${userId}
+  updateResponderProfile(responder: Partial<Responder>): Promise<Responder>
+    → PUT /api/responders/me
+  fetchNearbyResponders(lat, lng, radiusKm): Promise<Responder[]>
+    → GET /api/responders/near?lat=&lng=&radius=
+  respondToAlert(alertId: string, alertKind: string): Promise<ResponderResponse>
+    → POST /api/responders/respond/${alertId}  body: { alert_kind: alertKind }
+  updateResponseStatus(responseId: string, status: string): Promise<ResponderResponse>
+    → PUT /api/responders/response/${responseId}/status  body: { status }
+  rateResponse(responseId: string, rating: number): Promise<ResponderResponse>
+    → PUT /api/responders/response/${responseId}/rate  body: { rating }
+
+Upload:
+  getPresignedUrl(type: string, name: string, folder?: string): Promise<UploadPresignResponse>
+    → GET /api/upload/presign?type=&name=&folder=
+  uploadDirect(file: File, folder?: string): Promise<UploadResponse>
+    → POST /api/upload/direct  (multipart FormData with "file" field + optional "folder")
+  verifyUpload(path: string): Promise<{ exists: boolean, path: string }>
+    → GET /api/upload/verify?path=
+
+Analytics:
+  fetchTrends(eventType?: string, days?: number): Promise<Record<string, unknown>[]>
+    → GET /api/analytics/trends?event_type=&days=
+  fetchHeatmap(lat, lng, radiusKm): Promise<Record<string, unknown>[]>
+    → GET /api/analytics/heatmap?lat=&lng=&radius=
+
+Query:
+  queryNaturalLanguage(text, lat, lng, radiusKm): Promise<QueryResponse>
+    → GET /api/query?text=&lat=&lng=&radius=
+
+Health:
+  fetchHealth(): Promise<HealthStatus>
+    → GET /health
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORRECTED SOURCE MAP  (lib/constants.ts)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The backend's active ingestion sources have changed. Remove dead sources,
+add official sources. Update SOURCE_MAP to:
+
+  Social sources:
+    twitter:      { color: '#1d9bf0', label: 'Twitter/X' }
+    reddit:       { color: '#ff4500', label: 'Reddit' }
+    bluesky:      { color: '#0085ff', label: 'Bluesky' }
+    rss:          { color: '#f97316', label: 'RSS Feed' }
+
+  Official sources:
+    usgs:         { color: '#a16207', label: 'USGS' }
+    gdacs:        { color: '#1e40af', label: 'GDACS' }
+    reliefweb:    { color: '#c2410c', label: 'ReliefWeb' }
+    nasa_firms:   { color: '#dc2626', label: 'NASA FIRMS' }
+
+REMOVE these (no longer ingested):
+    mastodon, telegram, nextdoor, nws, gdelt, patch, pulsepoint
+
+Also update SEVERITY_LABELS to handle 1-10 scale (backend uses 1-10 not 1-5):
+  1-2: 'Low'       color: #22c55e
+  3-4: 'Guarded'   color: #84cc16
+  5-6: 'Elevated'  color: #eab308
+  7-8: 'High'      color: #f97316
+  9-10: 'Critical' color: #ef4444
+
+Create a helper: getSeverityLevel(severity: number): { label, color, level }
+that maps any 1-10 value to the appropriate bucket.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CORRECTED ZUSTAND STORES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update all stores to use corrected types. Key changes:
+
+store/alertsStore.ts:
+  - alerts: Alert[] — uses corrected Alert type (id not _id, alert_text not body, etc.)
+
+store/clusterStore.ts:
+  - clusters: Cluster[] — uses corrected Cluster type (id not _id, severity not severity_score)
+
+store/authStore.ts (NEW):
+  State:
+    user: User | null
+    token: string | null
+    isAuthenticated: boolean
+    isLoading: boolean
+  Actions:
+    setAuth(token: string, user: User)    → stores token in localStorage("crisisecho_token")
+    clearAuth()                           → removes token, resets user
+    setUser(user: User)
+    setLoading(loading: boolean)
+  Persist: token and user to localStorage
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GOOGLE MAPS MIGRATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Replace ALL Leaflet components with Google Maps using @vis.gl/react-google-maps.
+
+Delete these files entirely:
+  components/map/CrisisMap.tsx
+  components/map/ClusterMarker.tsx
+  components/map/CrisisMarker.tsx
+  components/map/UserLocationMarker.tsx
+  components/map/RadiusCircle.tsx
+  components/map/MapControls.tsx
+  components/map/CrisisMiniMap.tsx
+  types/leaflet.heat.d.ts
+
+Create new Google Maps components:
+
+lib/firebase.ts:
+  - Initialize Firebase app with env vars
+  - Export auth instance
+  - Export signInWithGoogle() that uses GoogleAuthProvider + signInWithPopup
+  - Returns the Firebase ID token string
+
+components/map/CrisisMap.tsx (REWRITE):
+  Use @vis.gl/react-google-maps:
+    import { APIProvider, Map, AdvancedMarker, InfoWindow } from '@vis.gl/react-google-maps'
+
+  - Wrap in <APIProvider apiKey={process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}>
+  - Use <Map> with mapId for cloud styling (or inline styles for dark mode)
+  - Dark map style: use Google Maps "Night" or custom JSON style that matches
+    the --bg-base/#080d1a dark navy aesthetic
+  - Light map style: use default Google Maps style or "Silver"
+  - Switch styles reactively based on uiStore.theme
+
+  Map configuration:
+    - defaultCenter: user location or { lat: 37.7749, lng: -122.4194 }
+    - defaultZoom: 12
+    - disableDefaultUI: true (we provide custom controls)
+    - gestureHandling: 'greedy'
+    - mapTypeControl: false
+
+components/map/CrisisMarkerOverlay.tsx:
+  Uses <AdvancedMarker> for each crisis
+  - Position from crisis.location.coordinates ([lng, lat] → { lat, lng })
+  - Custom HTML content: colored circle sized by severity, event type icon
+  - Color from getSeverityLevel(crisis.severity).color
+  - onClick: select crisis, open detail panel or info window
+
+components/map/ClusterMarkerOverlay.tsx:
+  Uses <AdvancedMarker> for each cluster
+  - Colored circle with contributor_count text
+  - Pulse animation if status === 'active'
+  - onClick: clusterStore.selectCluster(id), open detail panel
+
+components/map/UserLocationMarker.tsx:
+  Uses <AdvancedMarker> with a blue pulsing dot
+  - CSS animation for the pulse
+
+components/map/RadiusOverlay.tsx:
+  Uses google.maps.Circle via useMap() hook
+  - Center: user location
+  - Radius: locationStore.radiusKm * 1000 (meters)
+  - Stroke: --secondary color, dashed
+  - Fill: --secondary color, 5% opacity
+
+components/map/MapControls.tsx:
+  Custom floating controls (positioned absolute over the map):
+  - My Location button → flyTo user location
+  - Layer toggles: Clusters / Crises checkboxes
+  - Zoom +/- buttons (or rely on Google Maps built-in)
+
+components/map/CrisisMiniMap.tsx (REWRITE):
+  Small non-interactive map for detail views
+  - <Map> with gestureHandling="none" zoomControl={false}
+  - Single <AdvancedMarker> for the crisis/cluster location
+  - Height: 250px
+
+FlyTo coordination:
+  - Use the useMap() hook from @vis.gl/react-google-maps
+  - When uiStore.flyToTarget changes, call map.panTo() + map.setZoom()
+
+Import CrisisMap dynamically with next/dynamic ssr: false (Google Maps needs browser).
+
+Update app/page.tsx:
+  - Replace the Leaflet dynamic import with the new Google Maps CrisisMap
+  - Everything else stays the same
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UPDATE ALL EXISTING COMPONENTS FOR CORRECTED TYPES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Every component that references the old types must be updated.
+Here are the key field renames to apply throughout:
+
+Crisis:
+  _id → id
+  title → event (or use description for display text)
+  crisis_type → event (this IS the crisis type field)
+  centroid → location
+  summary → description
+  cluster_ids → unified_post_id (single reference, not array)
+  status → confirmed (boolean, not string enum)
+  first_seen → start_time (ISO string, use dayjs to parse)
+  last_updated → last_updated (now ISO string, use dayjs)
+  alert_sent → (removed, doesn't exist)
+  NEW fields: sources, image_urls, lat, lng
+
+Cluster:
+  _id → id
+  severity_score → severity
+  source_counts → sources (now string[], not Record)
+  platform_count → (removed, derive from sources.length)
+  is_active → (use status === 'active')
+  first_seen → start_time
+  last_seen → last_updated
+  radius_m → (removed, use affected_area polygon if needed)
+  crisis_id → (removed)
+  updated_at → last_updated
+  NEW fields: affected_area, severity_rationale, summary, post_count,
+    official_corroboration, location_confidence, status
+
+Alert:
+  _id → id
+  crisis_id → cluster_id
+  title → (removed, use crisis_type as header)
+  body → alert_text
+  location → centroid
+  radius_m → (removed)
+  published_at → published_at (now ISO string)
+  channel → (removed)
+  NEW fields: source_platforms, notified_users
+
+SourcePost (was Post):
+  _id → id
+  source_id → post_id
+  clean_text → cleaned_text
+  author_id → user
+  timestamp → timestamp (now ISO string, not unix number)
+  geo_confidence → location_confidence
+  geo_method → location_source
+  images → image_urls
+  has_image → (removed, derive from image_urls.length > 0)
+  cluster_id → cluster_id (same)
+  crisis_id → (removed)
+  embedding_id → text_embedding_id
+  created_at → (removed)
+  severity_score → severity_score (same, but now 1-10 scale)
+  NEW fields: url, image_embedding_ids, metadata
+
+Subscription:
+  _id → id
+  radius_m → radius_km
+  min_severity → (removed)
+  channel → (removed)
+  expires_at → (removed)
+  NEW fields: active (boolean)
+
+Components to update (search for every usage of the old field names):
+  - components/cards/AlertCard.tsx (alert.title→crisis_type, alert.body→alert_text, etc.)
+  - components/cards/CrisisCard.tsx (crisis._id→id, crisis.title→event, etc.)
+  - components/panels/FeedPanel.tsx
+  - components/panels/CrisesPanel.tsx
+  - components/panels/ClusterDetailPanel.tsx (cluster._id→id, source_counts→sources, etc.)
+  - components/panels/SettingsPanel.tsx (subscription fields)
+  - components/panels/MapPanel.tsx
+  - components/panels/QueryPanel.tsx
+  - components/ui/SeverityBadge.tsx (handle 1-10 scale)
+  - components/layout/Header.tsx
+  - app/crisis/[id]/page.tsx (MAJOR rewrite — use corrected Crisis fields)
+  - app/page.tsx
+  - All hooks (useClusterHotspots, useVerifiedCrises, useRecentAlerts, etc.)
+  - store/alertsStore.ts, store/clusterStore.ts
+  - lib/mockData.ts (update ALL mock data to match new types)
+
+For timestamp display: every ISO string timestamp should be parsed with dayjs:
+  dayjs(crisis.start_time).fromNow()  // "2 hours ago"
+  dayjs(alert.published_at).format('MMM D, h:mm A')  // "Jan 5, 2:30 PM"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UPDATE HOOKS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update all existing hooks to use the corrected API functions:
+
+hooks/useClusterHotspots.ts → uses fetchClusterHotspots (same name, corrected return type)
+hooks/useVerifiedCrises.ts → uses fetchVerifiedCrises (corrected return type)
+hooks/useNearbyPosts.ts → uses fetchNearbyPosts (corrected path /api/source-posts/nearby)
+hooks/useRecentAlerts.ts → uses fetchRecentAlerts (corrected return type)
+hooks/useClusterDetail.ts → uses fetchClusterById (corrected return type)
+
+Add NEW hooks:
+hooks/useNearbyCrises.ts
+  Query: fetchNearbyCrises(lat, lng, radiusKm)
+  refetchInterval: 60_000
+  Replaces useVerifiedCrises as the primary map data source
+
+hooks/useAuth.ts
+  - Checks localStorage for token on mount
+  - If token exists, calls fetchCurrentUser() to validate
+  - If valid, sets authStore state
+  - If 401, clears auth
+  - Returns: { user, isAuthenticated, isLoading, signIn, signOut }
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIREBASE + GOOGLE SIGN-IN
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+lib/firebase.ts:
+  - initializeApp with env vars (apiKey, authDomain, projectId)
+  - getAuth(app)
+  - signInWithGoogle():
+      const provider = new GoogleAuthProvider()
+      const result = await signInWithPopup(auth, provider)
+      const idToken = await result.user.getIdToken()
+      return idToken
+  - signOutFirebase(): await signOut(auth)
+
+Auth flow in the app:
+  - On page load: check localStorage for "crisisecho_token"
+  - If exists: validate by calling GET /api/users
+  - If no token or validation fails: show a sign-in overlay/modal
+  - Sign-in overlay:
+    - Semi-transparent backdrop over the dashboard
+    - Centered card with CrisisEcho logo, tagline, "Continue with Google" button
+    - On click: signInWithGoogle() → get idToken → POST /api/auth/google → receive JWT + user
+    - Store JWT in localStorage("crisisecho_token")
+    - Store user in authStore
+    - Dismiss overlay, dashboard becomes interactive
+  - For now, the dashboard should still be VIEWABLE without auth (public data),
+    but features like community reports, SOS, subscriptions require auth
+  - Add sign-out to the Settings panel
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+WEBSOCKET UPDATE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+hooks/useAlertsWebSocket.ts:
+  - Update the Zod parsing to use the corrected AlertSchema
+  - The WebSocket still connects to ws://localhost:8080/ws/alerts
+  - On message: parse with corrected Alert type
+  - Update toast to use alert.alert_text instead of alert.body
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DELIVERABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When done:
+  ✓ ALL TypeScript types match the actual Go backend JSON exactly
+  ✓ ALL API functions call the correct backend endpoint paths
+  ✓ Source map only shows active sources (twitter, reddit, bluesky, rss, usgs, gdacs, reliefweb, nasa_firms)
+  ✓ Severity badges handle 1-10 scale
+  ✓ Google Maps renders instead of Leaflet (dark style in dark mode)
+  ✓ Crisis/cluster markers render on Google Maps with correct data
+  ✓ Firebase initialized, Google Sign-In works end-to-end
+  ✓ JWT stored and attached to API requests
+  ✓ WebSocket alerts parse correctly with new types
+  ✓ All existing panels/cards render with corrected field names
+  ✓ Mock data updated to match corrected types
+  ✓ No TypeScript errors, no runtime crashes
+  ✓ `pnpm run dev` shows the working dashboard with Google Maps
+
+
+================================================================================
+STAGE 5 — COMMUNITY REPORTS, SOS, RESPONDERS, USER PROFILE & ANALYTICS
+================================================================================
+
+Continue building the CrisisEcho web frontend. Stage 4 corrected all types,
+API client, swapped to Google Maps, and added Firebase auth. Now implement
+the new domain features: community reporting, SOS emergency system, responder
+coordination, user profile management, and analytics dashboard.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NEW PACKAGES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  (none — react-hook-form, zod, recharts already installed from prompt 3)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. SIDEBAR EXPANSION — ADD NEW TABS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Expand the sidebar navigation. Currently 5 tabs:
+  Map | Feed | Crises | Query | Settings
+
+Add 4 more tabs (total 9). Since this is too many for a flat row, restructure
+the sidebar nav into grouped sections:
+
+  MONITOR (top section)
+    Map        (icon: MapPin)
+    Feed       (icon: Bell)
+    Crises     (icon: AlertTriangle)
+    Query      (icon: Search)
+
+  PARTICIPATE (middle section)
+    Reports    (icon: MessageSquare)     — community reports
+    SOS        (icon: ShieldAlert)       — SOS emergency
+    Respond    (icon: HeartHandshake)    — responder
+
+  ACCOUNT (bottom section)
+    Profile    (icon: User)              — user profile & saved locations
+    Settings   (icon: Settings)          — subscriptions, health, preferences
+
+Update uiStore.activePanel to include:
+  'map' | 'feed' | 'crises' | 'query' | 'reports' | 'sos' | 'respond' | 'profile' | 'settings'
+
+Update keyboard shortcuts:
+  existing: m=map, f=feed, c=crises, q=query, s=settings
+  add: p=profile, o=sos, d=respond, e=reports
+
+Update the mobile bottom nav:
+  Show only 5 icons: Map | Feed | Reports | SOS | More
+  "More" opens a bottom sheet with the remaining tabs
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. COMMUNITY REPORTS PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+components/panels/ReportsPanel.tsx  (activePanel === 'reports')
+
+Layout:
+  ┌─────────────────────────────────┐
+  │ Community Reports    [+ New]    │
+  ├─────────────────────────────────┤
+  │ [Nearby ▾] [All]  toggle       │
+  ├─────────────────────────────────┤
+  │ ReportCard                     │
+  │ ReportCard                     │
+  │ ReportCard                     │
+  │ ...                            │
+  ├─────────────────────────────────┤
+  │ Empty: "No reports nearby"     │
+  └─────────────────────────────────┘
+
+Hooks:
+  hooks/useCommunityReports.ts
+    - fetchNearbyCommunityReports(lat, lng, radiusKm) when "Nearby" selected
+    - fetchAllCommunityReports() when "All" selected
+    - refetchInterval: 60_000
+
+components/cards/ReportCard.tsx
+  - Event type badge + severity estimate badge
+  - Description (truncated 2 lines)
+  - Location: lat/lng in mono font
+  - Media thumbnails (if media_urls not empty, show first 2 as tiny squares)
+  - Status chip: submitted→gray, reviewing→yellow, verified→green, rejected→red
+  - Time ago (from created_at)
+  - onClick: open report in DetailPanel
+
+Report Detail (in DetailPanel):
+  When a report is selected, show full report in the right-side detail panel:
+  - Full description
+  - Event type + severity estimate
+  - People affected
+  - Media gallery (scrollable images, click to view full-screen in Radix Dialog)
+  - Mini map with pin at report location
+  - Status badge
+  - Created at timestamp
+
+Create Report Dialog:
+  Triggered by [+ New] button. Opens Radix Dialog (modal).
+  Form (react-hook-form + zod):
+    - Event type: Radix Select with crisis type options (CRISIS_TYPE_MAP keys)
+    - Description: textarea, min 10 chars
+    - Location: two options
+        [Use My Location] → auto-fill from geolocation
+        [Pick on Map] → render a small Google Map in the dialog with a
+         draggable marker (AdvancedMarker with gmpDraggable), on drag end
+         capture lat/lng
+    - Show selected coordinates in mono font
+    - Media: file input (accept="image/*", multiple)
+        On select: upload each file via uploadDirect(), show progress bar
+        Show uploaded image thumbnails with X to remove
+    - Severity estimate: segmented buttons [Low | Medium | High | Critical]
+    - People affected: text input (optional)
+  Submit: POST /api/community-reports
+  On success: show toast "Report submitted!", close dialog, refetch reports
+  On error: show error toast, keep dialog open
+  Validation: event_type + description required, location required
+  Requires auth: if not authenticated, show "Sign in to submit reports" with
+  the Google sign-in button instead of the form
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. SOS EMERGENCY PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+components/panels/SOSPanel.tsx  (activePanel === 'sos')
+
+Requires auth. If not authenticated, show auth prompt.
+
+Layout:
+  ┌─────────────────────────────────┐
+  │ ⚠ SOS Emergency                │
+  ├─────────────────────────────────┤
+  │ ┌─────────────────────────────┐ │
+  │ │   [ACTIVE ALERTS section]   │ │
+  │ │   SOSAlertCard (if any)     │ │
+  │ │   [Resolve] button          │ │
+  │ └─────────────────────────────┘ │
+  ├─────────────────────────────────┤
+  │ TRIGGER SOS                    │
+  │ [Select Profile ▾]            │
+  │ ┌─────────────────────────────┐ │
+  │ │      🔴 HOLD TO             │ │
+  │ │      TRIGGER SOS            │ │
+  │ │   (3-second hold button)    │ │
+  │ └─────────────────────────────┘ │
+  ├─────────────────────────────────┤
+  │ Your Profiles     [+ Create]   │
+  │ SOSProfileCard                 │
+  │ SOSProfileCard                 │
+  │ ...                            │
+  └─────────────────────────────────┘
+
+Hooks:
+  hooks/useSOSProfiles.ts
+    - fetchSOSProfiles(userId) — from authStore
+    - Mutations: createSOSProfile, updateSOSProfile, deleteSOSProfile
+
+  hooks/useSOSAlerts.ts
+    - fetchActiveSOSAlerts(userId)
+    - Mutations: triggerSOS, resolveSOSAlert
+    - refetchInterval: 10_000 (check every 10s when active alerts exist)
+
+components/cards/SOSProfileCard.tsx
+  - Label + event type badge
+  - Severity level badge
+  - Emergency contacts count: "3 contacts"
+  - Active/inactive toggle (calls updateSOSProfile with active: true/false)
+  - Edit button → opens profile form dialog
+  - Delete button → confirm dialog → deleteSOSProfile
+
+components/cards/SOSAlertCard.tsx
+  - Red pulsing border (animate-pulse)
+  - Label, event type, severity
+  - Location: lat/lng
+  - "Triggered X ago" timestamp
+  - Status badge (active → red pulse, resolved → green)
+  - [Resolve] button (only if status === 'active')
+
+SOS Trigger button:
+  - Large red circular button with "HOLD TO TRIGGER SOS" text
+  - Requires 3-second hold to activate (use onPointerDown/onPointerUp with timer)
+  - During hold: circular progress indicator fills around the button (CSS conic-gradient)
+  - If released early: cancel, reset progress
+  - On complete: get geolocation → triggerSOS(selectedProfileId, lat, lng)
+  - On success: show alert card, show toast "SOS Alert Sent!"
+  - Disabled if no profiles exist or no profile selected
+
+SOS Profile Form Dialog (Radix Dialog):
+  Form (react-hook-form + zod):
+    - Label: text input
+    - Event type: Radix Select
+    - Severity: slider 1-10
+    - Message template: textarea with placeholder example
+    - Emergency contacts: dynamic list
+        Each row: name input + phone input + [X remove] button
+        [+ Add Contact] button at bottom
+        Minimum 1 contact required
+    - Active: Radix Switch
+  Mode: create or edit (pre-fill if editing)
+  Submit: createSOSProfile or updateSOSProfile
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. RESPONDER PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+components/panels/ResponderPanel.tsx  (activePanel === 'respond')
+
+Requires auth.
+
+Layout (two states):
+
+State A — Not registered:
+  ┌─────────────────────────────────┐
+  │ Become a Responder             │
+  │                                │
+  │ [icon illustration area]       │
+  │ Help your community during     │
+  │ crisis events. Register as a   │
+  │ volunteer responder.           │
+  │                                │
+  │ [Register Now] button          │
+  └─────────────────────────────────┘
+
+State B — Registered:
+  ┌─────────────────────────────────┐
+  │ Responder Profile    [Edit]    │
+  ├─────────────────────────────────┤
+  │ Capabilities: [chips]          │
+  │ Availability: ● Available      │
+  │ Radius: 15 km                  │
+  │ Rating: ★★★★☆ (4.2)            │
+  │ Responses: 12                  │
+  │ Verified: ✓                    │
+  ├─────────────────────────────────┤
+  │ Nearby Responders    [Refresh] │
+  │ ResponderCard                  │
+  │ ResponderCard                  │
+  │ ...                            │
+  └─────────────────────────────────┘
+
+Hooks:
+  hooks/useResponder.ts
+    - fetchResponderProfile(userId) — may 404 if not registered
+    - Mutations: registerResponder, updateResponderProfile
+    - fetchNearbyResponders(lat, lng, radiusKm)
+
+components/cards/ResponderCard.tsx
+  - Capability chips (First Aid, Medical, etc.)
+  - Availability dot: green=available, yellow=busy, red=offline
+  - Rating: star display
+  - Response count
+  - Verified badge (if verified)
+  - Distance: compute from user location to responder location using Haversine
+
+Registration/Edit Dialog (Radix Dialog):
+  Form:
+    - Capabilities: multi-select chips
+        Options: 'First Aid', 'Search & Rescue', 'Medical', 'Firefighting',
+                 'Logistics', 'Translation', 'Shelter', 'Transport', 'Counseling'
+    - Availability: Radix Select [Available | Busy | Offline]
+    - Radius: slider 1-50 km
+    - Location: [Use My Location] or [Pick on Map]
+  Submit: registerResponder or updateResponderProfile
+
+Add "Respond" button to ClusterDetailPanel and Crisis detail page:
+  - Only visible if user is a registered responder
+  - Calls respondToAlert(alertId, 'crisis')
+  - Shows confirmation toast
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. USER PROFILE PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+components/panels/ProfilePanel.tsx  (activePanel === 'profile')
+
+Requires auth. If not authenticated, show sign-in prompt.
+
+Layout:
+  ┌─────────────────────────────────┐
+  │ 👤 Profile                      │
+  ├─────────────────────────────────┤
+  │ [Avatar circle]                │
+  │ John Doe                       │
+  │ john@example.com               │
+  │ Role: Free          [Edit]     │
+  ├─────────────────────────────────┤
+  │ Saved Locations  ({count})     │
+  │ LocationCard                   │
+  │ LocationCard                   │
+  │ [+ Add Location]              │
+  ├─────────────────────────────────┤
+  │ [Sign Out] button              │
+  └─────────────────────────────────┘
+
+Hooks:
+  hooks/useUserProfile.ts
+    - Fetches current user via fetchCurrentUser()
+    - Mutations: updateCurrentUser, addSavedLocation, deleteSavedLocation
+    - Auto-refetch when auth state changes
+
+Profile header:
+  - Avatar: if user.picture exists, show image (rounded). Otherwise show
+    initials in a colored circle (derive color from name hash)
+  - Name, email, role badge
+  - [Edit] opens inline edit mode: name becomes text input, save/cancel buttons
+
+Saved Locations section:
+  components/cards/SavedLocationCard.tsx
+    - Label (bold)
+    - Coordinates in mono font
+    - Radius badge: "25 km"
+    - [Trash icon] delete button → confirm → deleteSavedLocation(label)
+
+  Add Location Dialog:
+    Form:
+      - Label: text input
+      - Location: [Use My Location] or [Pick on Map]
+      - Radius: slider 1-100 km, default 25
+    Submit: addSavedLocation
+
+Sign Out:
+  - Confirm dialog: "Are you sure you want to sign out?"
+  - On confirm: authStore.clearAuth(), signOutFirebase()
+  - Clear all persisted state
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. ANALYTICS SECTION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add analytics data to the Settings panel (or create a dedicated section).
+
+Expand SettingsPanel.tsx with a new collapsible section: "Analytics"
+
+components/widgets/AnalyticsDashboard.tsx
+  Hooks:
+    hooks/useAnalytics.ts
+      - fetchTrends(eventType, days)
+      - fetchHeatmap(lat, lng, radiusKm)
+
+  Layout:
+    - Time range selector: [7d | 14d | 30d | 90d] segmented control
+    - Event type filter: Radix Select ("All" + CRISIS_TYPE_MAP keys)
+
+    Stats cards row (4 cards):
+      - Total Crises (number, large font)
+      - Avg Severity (number with severity color)
+      - Total Alerts (number)
+      - Avg Response Time (minutes)
+
+    Trend Chart (Recharts BarChart):
+      - X axis: date
+      - Y axis: crisis count
+      - Bars colored by event type
+      - Height: 200px
+
+    Event Type Breakdown (Recharts PieChart):
+      - Donut chart of event_type_breakdown
+      - Colors from CRISIS_TYPE_MAP
+      - Legend below
+      - Height: 200px
+
+    Top Sources:
+      - Horizontal list of SourceBadge components
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. UNIFIED POST DETAIL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When viewing a crisis detail (app/crisis/[id]/page.tsx), add a "View Synthesis"
+button that fetches and shows the linked UnifiedPost.
+
+hooks/useUnifiedPost.ts
+  - fetchUnifiedPostById(id)
+  - enabled: id is not null
+
+In the crisis detail page:
+  - Add section "AI Synthesis" below the crisis description
+  - Fetch unified post via crisis.unified_post_id
+  - Show:
+    - Summary (the LLM-generated synthesis)
+    - Confidence score: percentage bar (0-1 → 0-100%)
+    - Verified badge (green check if verified)
+    - Official corroboration badge (if true)
+    - Contributor count
+    - Sources list (SourceBadge chips)
+    - Post count (number of source posts that contributed)
+
+Also allow clicking a cluster in the detail panel to load its associated
+unified post via the cluster_id field.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. UPDATE CRISIS DETAIL PAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Rewrite app/crisis/[id]/page.tsx to use the corrected Crisis type.
+
+The existing page references fields that no longer exist (title, cluster_ids,
+alert_sent). Update it completely:
+
+Layout:
+  Left column (60%):
+    - Back button
+    - Event type heading (crisis.event) + severity badge (1-10 scale)
+    - Confirmed/unconfirmed badge
+    - Description paragraph (crisis.description)
+    - Source badges row (crisis.sources mapped to SourceBadge)
+    - Image gallery (crisis.image_urls — horizontal scroll, click for full view)
+    - Timestamps: "Started: ..." + "Last Updated: ..."
+    - AI Synthesis section (from unified post, see §7 above)
+    - [Respond] button (if user is registered responder)
+
+  Right column (40%):
+    - Mini Google Map with crisis pin
+    - Coordinates in mono font (crisis.lat, crisis.lng)
+    - Source breakdown: since crisis.sources is a string array,
+      show source distribution as counts + colored bars
+    - "Get Directions" link: opens Google Maps directions in new tab
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. MAP INTEGRATION FOR NEW FEATURES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add community report markers to the map:
+  - New hook: useNearbyCommunityReports in CrisisMap
+  - Different marker style: square shape, muted color
+  - Clicking opens report detail in DetailPanel
+
+Add map controls toggle for: Crises / Clusters / Reports layers
+
+When viewing SOS panel with active alerts, show SOS alert locations on the map
+with a distinct red pulsing marker.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. AUTH GUARDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Create a reusable auth guard component:
+
+components/ui/AuthRequired.tsx
+  Props: children: ReactNode, message?: string
+  - If authStore.isAuthenticated: render children
+  - If not: render a styled card with:
+      "Sign in required"
+      {message or "Sign in to access this feature"}
+      [Continue with Google] button (calls signInWithGoogle flow)
+
+Use <AuthRequired> to wrap:
+  - ReportsPanel (for the create button — viewing is public)
+  - SOSPanel (entirely)
+  - ResponderPanel (entirely)
+  - ProfilePanel (entirely)
+  - Settings subscription creation
+  - Community report creation dialog
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DELIVERABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When done:
+  ✓ Sidebar has 9 tabs organized in 3 groups
+  ✓ Community reports: view nearby/all, create with photo upload + map picker
+  ✓ SOS: manage profiles with emergency contacts, trigger with hold button
+  ✓ Responder: register, view profile, see nearby responders
+  ✓ Profile: view/edit user, manage saved locations, sign out
+  ✓ Analytics: trend chart, event breakdown pie chart, stats cards
+  ✓ Unified post synthesis shown on crisis detail page
+  ✓ Crisis detail page uses correct fields
+  ✓ Auth guards on protected features
+  ✓ Community reports + SOS alerts visible on map
+  ✓ All new hooks follow TanStack Query patterns
+  ✓ Forms validated with zod + react-hook-form
+  ✓ No TypeScript errors, no runtime crashes
+
+
+================================================================================
+STAGE 6 — REAL-TIME ENHANCEMENTS, HEATMAP, NOTIFICATIONS & FULL POLISH
+================================================================================
+
+Continue building the CrisisEcho web frontend. Stages 4-5 corrected all types,
+swapped to Google Maps, added auth, and implemented community reports, SOS,
+responders, profile, and analytics. Now add advanced real-time features,
+heatmap visualization, notification system, and apply comprehensive polish.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. ENHANCED REAL-TIME SYSTEM
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The WebSocket hook currently handles alerts. Enhance it to:
+
+a) Smart alert routing:
+   When a new alert arrives via WebSocket:
+   - Check if the alert's centroid is within any of the user's saved locations
+     (compare distance using Haversine formula vs saved location's radius_km)
+   - If match: show a PRIORITY toast (red border, stays 10 seconds, plays sound)
+   - If no match: show a standard toast (normal border, 5 seconds, no sound)
+   - Add a "priority" field to the toast store: Toast type gets priority: boolean
+
+b) Map marker updates:
+   When a new alert arrives:
+   - If the map is showing the area, add a temporary pulse animation
+     at the alert's centroid coordinates
+   - The pulse: expanding circle that fades out over 2 seconds
+     (use google.maps.Circle with animating radius + opacity)
+
+c) Connection resilience:
+   - Show a persistent warning banner at the top of the sidebar when
+     WebSocket is disconnected for > 30 seconds:
+     "Real-time updates paused. [Reconnect]"
+   - When reconnected: flash the status bar green briefly
+
+d) Feed auto-scroll:
+   - In FeedPanel, when a new alert arrives and user is scrolled to top,
+     auto-scroll to show the new alert with slide-in animation
+   - If user has scrolled down, show a floating "New alerts ↑" pill at top
+     clicking scrolls to top
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+2. GOOGLE MAPS HEATMAP
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Google Maps has a built-in heatmap visualization layer.
+
+When the heatmap toggle is on in MapControls:
+  - Fetch data: use fetchHeatmap(lat, lng, radiusKm) from analytics API
+  - OR use fetchNearbyPosts(lat, lng, radiusKm) and derive heatmap points
+  - Build heatmap data: posts.map(p => ({
+      location: new google.maps.LatLng(
+        p.location.coordinates[1],
+        p.location.coordinates[0]
+      ),
+      weight: p.severity_score / 10
+    }))
+  - Create: new google.maps.visualization.HeatmapLayer({
+      data: heatmapData,
+      radius: 30,
+      opacity: 0.6,
+      gradient: ['transparent', '#22c55e', '#eab308', '#f97316', '#ef4444']
+    })
+  - Add/remove from map based on toggle state
+  - NOTE: Google Maps heatmap requires the "visualization" library.
+    Add it to the APIProvider: libraries={['visualization']}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. NOTIFICATION PREFERENCES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add to SettingsPanel:
+
+Section: "Notification Preferences"
+  - Desktop notifications toggle (Radix Switch):
+      On enable: request Notification.requestPermission()
+      If granted: show browser notifications for alerts matching subscriptions
+      Store preference in uiStore (persisted)
+  - Sound toggle:
+      On enable: play a subtle notification sound on new priority alerts
+      Use a short "ping" sound (create a simple AudioContext beep or include
+      a tiny MP3 in public/)
+  - Minimum severity for notifications: slider 1-10
+      "Only notify me about severity X and above"
+  - Quiet hours: two time pickers (start + end)
+      During quiet hours: suppress toasts and sounds, still show badge count
+      Store in uiStore
+
+components/ui/BrowserNotification.ts (utility, not component):
+  - showBrowserNotification(title, body, icon?)
+  - Check if permission granted, if in quiet hours, if severity meets minimum
+  - Called from WebSocket hook when alert matches subscription
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+4. ENHANCED CRISIS DETAIL PAGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Enhance app/crisis/[id]/page.tsx with:
+
+a) Image lightbox:
+   When clicking an image from image_urls:
+   - Open Radix Dialog with full-size image
+   - Left/right navigation arrows if multiple images
+   - Close on backdrop click or X button
+   - Smooth fade-in animation
+
+b) Share functionality:
+   - "Share" button that copies a link to clipboard
+   - Toast: "Link copied to clipboard"
+   - Use navigator.clipboard.writeText(window.location.href)
+
+c) Related crises:
+   - Fetch nearby crises (fetchNearbyCrises with same location, small radius)
+   - Filter out the current crisis
+   - Show as compact cards: "Other crises nearby"
+   - Clicking navigates to that crisis
+
+d) Timeline view:
+   - If crisis has been active for a while (start_time > 1h ago):
+     Show a simple timeline at the bottom:
+       ● Started — {start_time formatted}
+       ● Last Updated — {last_updated formatted}
+       ● Sources: {sources.length} platforms reporting
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. ENHANCED CLUSTER DETAIL PANEL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update ClusterDetailPanel.tsx:
+
+Now that cluster types are corrected, update to show:
+  - Summary paragraph (cluster.summary)
+  - Severity rationale (cluster.severity_rationale) — show in a subtle
+    info box below the severity badge
+  - Official corroboration badge (if true: shield icon with checkmark)
+  - Location confidence: progress bar (0-1 → 0-100%)
+  - Status badge: active/resolved/monitoring with colored dot
+  - Source platforms: chips from cluster.sources array
+  - Post count + contributor count (now separate fields)
+  - Affected area: if affected_area polygon has coordinates, show it
+    as a polygon overlay on the mini map
+
+When cluster is selected:
+  - Also draw the affected_area polygon on the main map
+    (use google.maps.Polygon with semi-transparent fill matching
+    the crisis type color)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. GLOBAL LOADING & ERROR STATES AUDIT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Go through EVERY panel and page. Ensure:
+
+Loading:
+  - Every panel shows themed skeleton cards while data is loading
+  - SkeletonCard layout should match the real card layout for each type
+  - Create variants: SkeletonAlertCard, SkeletonCrisisCard, SkeletonReportCard
+
+Error:
+  - Every panel shows error state with: red icon, error message, [Retry] button
+  - Retry calls the hook's refetch()
+  - Network errors: "Unable to connect to CrisisEcho servers"
+  - 401 errors: "Session expired. Please sign in again." with sign-in button
+  - 404 errors: "Not found" with back navigation
+  - Generic: "Something went wrong" with retry
+
+Empty:
+  - Every list panel shows a themed empty state
+  - Use <EmptyState> component with contextual messages:
+    Feed: "No alerts in the last 24 hours — all clear."
+    Crises: "No active crises detected."
+    Reports: "No community reports nearby. Be the first to report."
+    SOS: "No SOS profiles yet. Set up your emergency profile."
+    Responders: "No responders nearby."
+    Saved locations: "No saved locations. Add locations to monitor."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+7. ANIMATION POLISH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Apply Framer Motion animations throughout:
+
+Page transitions:
+  - Crisis detail page: fade in + slight slide up (y: 20 → 0, opacity: 0 → 1)
+
+Panel content transitions:
+  - When switching sidebar tabs: crossfade (AnimatePresence with fade)
+
+List items:
+  - Cards in all panels: staggered entrance animation
+    Each card: { opacity: 0, y: 10 } → { opacity: 1, y: 0 }
+    Stagger: 50ms between each card
+    Only on initial load (not on re-renders)
+
+Detail panel:
+  - Slide in from right with spring physics: { x: 384 } → { x: 0 }
+  - Stiffness: 300, damping: 30 (snappy but smooth)
+
+Markers on map:
+  - When new crisis data loads, markers should fade in (CSS transition on opacity)
+  - Selected marker: scale up slightly (transform: scale(1.15)) with transition
+
+Interactive feedback:
+  - All clickable cards: scale(0.98) on press, 100ms transition
+  - Buttons: slight brightness increase on hover
+
+Reduced motion:
+  - Wrap all Framer Motion animations: check useReducedMotion()
+  - If true: disable all entrance animations, keep only fades
+  - Keep functional animations (panel slide, dialog open/close)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. MOBILE RESPONSIVE FINAL PASS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Ensure all new panels work on mobile (<768px):
+
+- All panels render correctly in the mobile bottom sheet
+- Form dialogs (create report, SOS profile, responder registration):
+  On mobile, open as full-screen sheet instead of centered dialog
+  Use Radix Dialog with mobile-specific styling:
+    max-h-[90vh], overflow-y-auto, rounded-t-xl
+- Map picker in forms: sufficient height (min 200px) on mobile
+- SOS trigger button: large enough for thumb tap (min 120px diameter)
+- Saved location cards: stack vertically, no horizontal scroll
+- Analytics charts: reduce height on mobile, allow horizontal scroll for bar chart
+- Profile panel: single column, avatar smaller
+- Bottom nav "More" sheet: grid of remaining tab icons, 3 columns
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+9. PERFORMANCE AUDIT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- React.memo on ALL card components (AlertCard, CrisisCard, ReportCard,
+  SOSProfileCard, SOSAlertCard, ResponderCard, SavedLocationCard)
+- useMemo for filtered/derived data in all panels
+- Dynamic imports (ssr: false) for: CrisisMap, recharts components,
+  Google Maps components
+- Debounce radius slider changes (300ms) before triggering API refetch
+- Virtualize alert feed list if alerts.length > 100 (use CSS overflow +
+  fixed item height, or @tanstack/react-virtual if needed)
+- Lazy load images in crisis detail (use next/image with loading="lazy")
+- TanStack Query garbage collection: gcTime 5 min globally
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. ACCESSIBILITY FINAL PASS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- All icon-only buttons: aria-label
+- All badges: aria-label describing the full meaning
+- Alert feed: aria-live="polite" on the container
+- SOS trigger button: aria-label="Hold for 3 seconds to trigger SOS emergency alert"
+- Map: role="application" aria-label="Crisis monitoring map"
+- All form inputs: associated labels (htmlFor or aria-label)
+- Focus management: when dialog opens, focus first input; when closes,
+  return focus to trigger button
+- Color contrast: verify all text meets WCAG AA (4.5:1 for normal text)
+- Keyboard navigation: all interactive elements focusable via Tab
+- Skip-to-content link (if not already present)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+11. UPDATED MOCK DATA
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update lib/mockData.ts with ALL new types for development:
+  - 3 mock CommunityReports (various statuses)
+  - 2 mock SOSProfiles with emergency contacts
+  - 1 mock active SOSAlert
+  - 2 mock Responders
+  - 1 mock User with 2 saved locations
+  - 1 mock AnalyticsSummary
+  - 2 mock UnifiedPosts
+  - Update existing mock Crises, Clusters, Alerts to use corrected field names
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FINAL FOLDER STRUCTURE (new/modified files)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+components/
+  panels/
+    ReportsPanel.tsx           (NEW)
+    SOSPanel.tsx               (NEW)
+    ResponderPanel.tsx         (NEW)
+    ProfilePanel.tsx           (NEW)
+  cards/
+    ReportCard.tsx             (NEW)
+    SOSProfileCard.tsx         (NEW)
+    SOSAlertCard.tsx           (NEW)
+    ResponderCard.tsx          (NEW)
+    SavedLocationCard.tsx      (NEW)
+  widgets/
+    AnalyticsDashboard.tsx     (NEW)
+  ui/
+    AuthRequired.tsx           (NEW)
+    BrowserNotification.ts     (NEW)
+    ImageLightbox.tsx          (NEW)
+
+hooks/
+  useCommunityReports.ts       (NEW)
+  useSOSProfiles.ts            (NEW)
+  useSOSAlerts.ts              (NEW)
+  useResponder.ts              (NEW)
+  useUserProfile.ts            (NEW)
+  useAnalytics.ts              (NEW)
+  useUnifiedPost.ts            (NEW)
+  useNearbyCrises.ts           (NEW)
+
+store/
+  authStore.ts                 (from stage 4)
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DELIVERABLE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When done:
+  ✓ Smart WebSocket alert routing with priority notifications
+  ✓ Browser desktop notifications for matching subscriptions
+  ✓ Heatmap visualization layer on Google Maps
+  ✓ Image lightbox on crisis detail page
+  ✓ Cluster affected area polygon visible on map
+  ✓ Every panel has proper loading, error, and empty states
+  ✓ Smooth staggered animations on all list panels
+  ✓ Mobile responsive: all new panels work in bottom sheet
+  ✓ Performance: memoized cards, debounced sliders, lazy images
+  ✓ Accessibility: all aria labels, focus management, keyboard nav
+  ✓ Mock data updated for all new types
+  ✓ No TypeScript errors, no console warnings, no hydration mismatches
+  ✓ Dashboard feels polished, fast, and production-ready
+  ✓ Lighthouse score: aim for ≥ 85 performance on desktop
+
+
+================================================================================
+END OF PROMPTS
+================================================================================

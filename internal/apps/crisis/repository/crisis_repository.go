@@ -62,6 +62,34 @@ func (r *CrisisRepository) FindNear(ctx context.Context, lat, lng, radiusKm floa
 	return results, nil
 }
 
+// Search returns crises matching the given filter criteria. Zero-value fields are ignored.
+func (r *CrisisRepository) Search(ctx context.Context, f model.CrisisFilter) ([]*model.Crisis, error) {
+	filter := bson.D{}
+	if f.EventType != "" {
+		filter = append(filter, bson.E{Key: "event", Value: f.EventType})
+	}
+	if f.SeverityMin > 0 {
+		filter = append(filter, bson.E{Key: "severity", Value: bson.D{{Key: "$gte", Value: f.SeverityMin}}})
+	}
+	if f.SeverityMax > 0 {
+		filter = append(filter, bson.E{Key: "severity", Value: bson.D{{Key: "$lte", Value: f.SeverityMax}}})
+	}
+	if f.Since != nil {
+		filter = append(filter, bson.E{Key: "start_time", Value: bson.D{{Key: "$gte", Value: *f.Since}}})
+	}
+	if f.Until != nil {
+		filter = append(filter, bson.E{Key: "start_time", Value: bson.D{{Key: "$lte", Value: *f.Until}}})
+	}
+	if f.Confirmed != nil {
+		filter = append(filter, bson.E{Key: "confirmed", Value: *f.Confirmed})
+	}
+	results, err := r.FindMany(ctx, filter)
+	if err != nil {
+		return nil, fmt.Errorf("CrisisRepository.Search: %w", err)
+	}
+	return results, nil
+}
+
 // MarkConfirmed sets confirmed=true and updates last_updated on the given crisis.
 func (r *CrisisRepository) MarkConfirmed(ctx context.Context, id primitive.ObjectID) error {
 	filter := bson.D{{Key: "_id", Value: id}}
