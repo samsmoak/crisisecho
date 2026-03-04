@@ -99,6 +99,10 @@ func GetUsersCollection(client *mongo.Client) *mongo.Collection {
 	return mainDB(client).Collection("users")
 }
 
+func GetSavedLocationsCollection(client *mongo.Client) *mongo.Collection {
+	return mainDB(client).Collection("saved_locations")
+}
+
 // GetCommunityReportsCollection returns the community_reports collection from the main database.
 func GetCommunityReportsCollection(client *mongo.Client) *mongo.Collection {
 	return mainDB(client).Collection("community_reports")

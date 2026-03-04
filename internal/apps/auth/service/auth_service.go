@@ -73,9 +73,10 @@ func (s *authService) GoogleAuth(ctx context.Context, idToken string) (string, *
 	}
 
 	name, _ := firebaseToken.Claims["name"].(string)
+	picture, _ := firebaseToken.Claims["picture"].(string)
 
 	// Find or create the user in our database.
-	user, err := s.userSvc.GetOrCreateUser(ctx, firebaseToken.UID, email, name, "")
+	user, err := s.userSvc.GetOrCreateUser(ctx, firebaseToken.UID, email, name, picture)
 	if err != nil {
 		return "", nil, fmt.Errorf("google auth: user upsert failed: %w", err)
 	}

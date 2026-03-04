@@ -1141,3 +1141,119 @@ After this stage, the app should:
 ================================================================================
 END OF PROMPTS
 ================================================================================
+
+
+
+
+================================================================================
+CRISISECHO FLUTTER — SAVED LOCATIONS MIGRATION
+================================================================================
+
+The Go backend has been refactored: saved locations are no longer embedded in the
+User model. They now live in their own `saved_locations` MongoDB collection with
+a dedicated REST API. Update the Flutter app to match.
+
+--- BACKEND CHANGES SUMMARY ---
+
+OLD endpoints (REMOVED):
+  GET    /api/users/locations           → list saved locations
+  POST   /api/users/locations           → add a saved location
+  DELETE /api/users/locations/:label    → delete by label
+
+NEW endpoints (all require JWT auth via Authorization: Bearer <token>):
+  GET    /api/locations                 → list all locations for authenticated user
+  POST   /api/locations                 → create a new location
+  PUT    /api/locations/:id             → update a location by ID
+  DELETE /api/locations/:id             → delete a location by ID (returns 204)
+
+OLD User model (backend):
+  { id, firebase_uid, email, name, picture, role, saved_locations, created_at, updated_at }
+
+NEW User model (backend):
+  { id, firebase_uid, email, name, picture, role, created_at, updated_at }
+  → `saved_locations` field REMOVED from User
+
+NEW SavedLocation model (backend response):
+  {
+    "id": "ObjectID hex string",
+    "user_id": "ObjectID hex string",
+    "label": "Home",
+    "location": { "type": "Point", "coordinates": [lng, lat] },
+    "lat": 40.7128,
+    "lng": -74.006,
+    "radius_km": 25.0,
+    "created_at": "2026-03-04T...",
+    "updated_at": "2026-03-04T..."
+  }
+
+PUT /api/users now only accepts: { "name": "string" }
+  → No longer accepts saved_locations in the body
+
+--- DART CHANGES REQUIRED ---
+
+1. UPDATE User model (features/auth/data/models/user_model.dart):
+   - Remove the `savedLocations` field entirely
+   - Remove any SavedLocation import if it was only used here
+   - Regenerate freezed/json_serializable
+
+2. UPDATE SavedLocation model (move to features/profile/data/models/saved_location_model.dart
+   or a shared location):
+   - Add `id` field (String)
+   - Add `userId` field (String, json key: user_id)
+   - Add `createdAt` field (DateTime, json key: created_at)
+   - Add `updatedAt` field (DateTime, json key: updated_at)
+   - Keep: label, location (GeoJSONPoint), lat, lng, radiusKm
+   - Regenerate freezed/json_serializable
+
+3. UPDATE api_endpoints.dart:
+   - Remove any /users/locations endpoints
+   - Add:
+     static const String locations = '/locations';
+     static String locationById(String id) => '/locations/$id';
+
+4. CREATE a LocationRepository (features/profile/data/location_repository.dart):
+   Abstract interface + implementation:
+     - getLocations() → List<SavedLocation>
+         GET /api/locations
+     - createLocation({label, lat, lng, radiusKm}) → SavedLocation
+         POST /api/locations with body { "label", "lat", "lng", "radius_km" }
+     - updateLocation(String id, {label, lat, lng, radiusKm}) → SavedLocation
+         PUT /api/locations/:id with body { "label", "lat", "lng", "radius_km" }
+     - deleteLocation(String id) → void
+         DELETE /api/locations/:id
+
+5. CREATE a LocationController (Riverpod AsyncNotifier)
+   (features/profile/presentation/controllers/location_controller.dart):
+   - state: AsyncValue<List<SavedLocation>>
+   - loadLocations() → fetches from repository, updates state
+   - addLocation(...) → calls repository, refreshes list
+   - updateLocation(...) → calls repository, refreshes list
+   - removeLocation(String id) → calls repository, refreshes list
+
+6. UPDATE saved locations screen:
+   - Use the new LocationController instead of reading from User state
+   - Swipe-to-delete now calls deleteLocation(id) instead of deleteByLabel
+   - "Add Location" form now calls addLocation(...)
+   - Each SavedLocationCard should show an edit action that calls updateLocation
+
+7. UPDATE auth repository:
+   - Remove updateUser's savedLocations parameter
+   - updateUser now only sends { "name": "..." } to PUT /api/users
+
+8. UPDATE profile/edit profile screen:
+   - Remove any saved_locations from the user update call
+   - The "Saved Locations" count badge on the profile screen should read from
+     the LocationController state, not from user.savedLocations
+
+9. Regenerate code:
+   dart run build_runner build --delete-conflicting-outputs
+
+--- WHAT SHOULD WORK AFTER THIS UPDATE ---
+
+  ✓ User model no longer has savedLocations field
+  ✓ Saved locations are fetched independently via GET /api/locations
+  ✓ CRUD operations (create, read, update, delete) all work against /api/locations
+  ✓ Saved locations screen loads from its own controller/state
+  ✓ Profile screen shows location count from LocationController
+  ✓ Edit profile only sends name to PUT /api/users
+  ✓ All existing functionality (auth, map, crises, etc.) unaffected

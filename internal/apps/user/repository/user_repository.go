@@ -35,11 +35,22 @@ func (r *UserRepository) FindByFirebaseUID(ctx context.Context, uid string) (*mo
 }
 
 // UpsertByFirebaseUID finds a user by UID or inserts a new one.
-// Uses $setOnInsert so existing users are not overwritten on every login.
+// On every login it updates email, name, picture so returning users
+// always have fresh profile data from the identity provider.
 func (r *UserRepository) UpsertByFirebaseUID(ctx context.Context, user *model.User) (*model.User, error) {
 	filter := bson.D{{Key: "firebase_uid", Value: user.FirebaseUID}}
 	update := bson.D{
-		{Key: "$setOnInsert", Value: user},
+		{Key: "$set", Value: bson.D{
+			{Key: "email", Value: user.Email},
+			{Key: "name", Value: user.Name},
+			{Key: "picture", Value: user.Picture},
+			{Key: "updated_at", Value: user.UpdatedAt},
+		}},
+		{Key: "$setOnInsert", Value: bson.D{
+			{Key: "firebase_uid", Value: user.FirebaseUID},
+			{Key: "role", Value: user.Role},
+			{Key: "created_at", Value: user.CreatedAt},
+		}},
 	}
 	opts := options.FindOneAndUpdate().
 		SetUpsert(true).

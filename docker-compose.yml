@@ -39,6 +39,8 @@ services:
     environment:
       # Point the Go API at the sidecar container name.
       PYTHON_SIDECAR_URL: http://crisisecho-sidecar:8081
+    volumes:
+      - ./config/firebase-admin.json:/app/config/firebase-admin.json:ro
     depends_on:
       crisisecho-sidecar:
         condition: service_healthy

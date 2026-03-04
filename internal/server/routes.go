@@ -47,6 +47,9 @@ import (
 	unifiedPostCtrl "crisisecho/internal/apps/unifiedpost/controller"
 	unifiedPostRepo "crisisecho/internal/apps/unifiedpost/repository"
 	unifiedPostSvc "crisisecho/internal/apps/unifiedpost/service"
+	savedLocCtrl "crisisecho/internal/apps/location/controller"
+	savedLocRepo "crisisecho/internal/apps/location/repository"
+	savedLocSvc "crisisecho/internal/apps/location/service"
 	userCtrl "crisisecho/internal/apps/user/controller"
 	userRepo "crisisecho/internal/apps/user/repository"
 	userSvc "crisisecho/internal/apps/user/service"
@@ -121,6 +124,12 @@ func RegisterRoutes(srv *FiberServer) {
 	userService := userSvc.NewUserService(userRepository)
 	userController := userCtrl.NewUserController(userService)
 	userController.RegisterRoutes(api.Group("/users"))
+
+	// === Saved Locations ===
+	savedLocationRepo := savedLocRepo.NewLocationRepository(mainDB)
+	savedLocationService := savedLocSvc.NewLocationService(savedLocationRepo)
+	savedLocationController := savedLocCtrl.NewLocationController(savedLocationService)
+	savedLocationController.RegisterRoutes(api.Group("/locations"))
 
 	// === Auth ===
 	authService := authSvc.NewAuthService(userService)
